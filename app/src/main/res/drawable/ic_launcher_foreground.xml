@@ -1,0 +1,25 @@
+<?xml version="1.0" encoding="utf-8"?>
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="108dp"
+    android:height="108dp"
+    android:viewportWidth="108"
+    android:viewportHeight="108">
+    <!-- ground -->
+    <path android:fillColor="#6B8E23" android:pathData="M18,78 L90,78 L90,90 L18,90 Z" />
+    <!-- sling fork -->
+    <path android:strokeColor="#5D3A1A" android:strokeWidth="6" android:strokeLineCap="round"
+        android:pathData="M54,80 L54,64 M54,64 L40,46 M54,64 L68,46" />
+    <!-- band -->
+    <path android:strokeColor="#3B2A1A" android:strokeWidth="2.5" android:strokeLineCap="round"
+        android:pathData="M40,46 L54,58 L68,46" />
+    <!-- arc of the shot -->
+    <path android:strokeColor="#FFFFFF" android:strokeWidth="2" android:strokeLineCap="round"
+        android:pathData="M54,44 Q66,18 80,34" />
+    <!-- boulder -->
+    <path android:fillColor="#8A8580" android:pathData="M54,52 m-10,0 a10,10 0 1,0 20,0 a10,10 0 1,0 -20,0" />
+    <path android:fillColor="#6E6964" android:pathData="M57,55 m-3,0 a3,3 0 1,0 6,0 a3,3 0 1,0 -6,0" />
+    <path android:fillColor="#B5B0AA" android:pathData="M50,48 m-3,0 a3,3 0 1,0 6,0 a3,3 0 1,0 -6,0" />
+    <!-- incoming barrel -->
+    <path android:fillColor="#8B5A2B" android:pathData="M76,34 L88,34 L88,46 L76,46 Z" />
+    <path android:fillColor="#3E3E3E" android:pathData="M76,37 L88,37 L88,39 L76,39 Z M76,41 L88,41 L88,43 L76,43 Z" />
+</vector>
