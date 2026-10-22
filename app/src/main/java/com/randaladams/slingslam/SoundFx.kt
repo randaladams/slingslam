@@ -33,7 +33,7 @@ class SoundFx(context: Context) {
     fun play(s: Sfx) {
         if (!enabled) return
         val id = ids[s] ?: return
-        val vol = when (s) {
+        val vol = MASTER * when (s) {
             Sfx.LAND -> 0.6f
             Sfx.THROW -> 0.7f
             else -> 1f
@@ -42,4 +42,9 @@ class SoundFx(context: Context) {
     }
 
     fun release() = pool.release()
+
+    companion object {
+        /** Overall loudness (0..1). */
+        const val MASTER = 0.5f
+    }
 }

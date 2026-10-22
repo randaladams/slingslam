@@ -23,17 +23,18 @@ object K {
     const val Z_FAR = 100f
     const val Z_REACH = 1.5f          // a hazard at or below this distance has reached you
     const val G = 60f                 // gravity
-    const val LAUNCH_DEG = 52f        // every lob leaves the sling at this elevation
+    const val LAUNCH_DEG_MIN = 12f    // weak shots fly nearly flat and fast
+    const val LAUNCH_DEG_MAX = 52f    // full-power shots are high lobs
     const val LAUNCH_Y = 1.5f
     const val BOULDER_R = 1.4f
-    const val MIN_RANGE = 10f
+    const val MIN_RANGE = 4f
     const val MAX_RANGE = 104f
     const val MAX_AIM_DEG = 25f       // how far left/right you can aim
     const val SHIELD_MAX = 100f
     const val SHIELD_REGEN = 0.8f     // per second
     const val SHIELD_PER_KILL = 6f
     const val MAX_SLING = 5
-    const val HAZARDS_PER_LEVEL = 5
+    const val HAZARDS_PER_LEVEL = 6
 }
 
 enum class Kind(
@@ -80,7 +81,14 @@ class Particle(
     var x: Float, var y: Float, var z: Float,
     var vx: Float, var vy: Float, var vz: Float,
     var life: Float, val maxLife: Float, val color: Int, val size: Float,
-)
+    val type: Int = DEBRIS,
+) {
+    companion object {
+        const val DEBRIS = 0
+        const val SMOKE = 1
+        const val FIRE = 2
+    }
+}
 
 class Popup(val text: String, val x: Float, val z: Float, val color: Int, val big: Boolean = false) {
     var t = 0f
@@ -132,18 +140,32 @@ class World(private val listener: WorldListener, seed: Long = System.nanoTime())
 
     val reloadDuration get() = 0.95f - 0.11f * (slingLevel - 1)
     val splash get() = 0.5f + 0.3f * (slingLevel - 1)     // extra hit radius when a boulder lands
-    val hazardSpeed get() = min(10f * (1f + 0.12f * (level - 1)), 42f)
-    val spawnDelay get() = max(0.3f, 1.3f - 0.09f * (level - 1))
+    val hazardSpeed get() = min(5.5f * (1f + 0.10f * (level - 1)), 30f)
+    val spawnDelay get() = max(0.4f, 1.8f - 0.1f * (level - 1))
     val multiplier get() = 1 + streak / 5
 
-    /** Where a throw of this power and aim would land (ignoring launch height). */
+    /** Where a throw of this power would land (ignoring launch height). */
     fun rangeFor(power: Float) = K.MIN_RANGE + power.coerceIn(0f, 1f) * (K.MAX_RANGE - K.MIN_RANGE)
+
+    /** Elevation in radians: low power throws flat and fast, high power lobs. */
+    fun launchAngle(power: Float): Float {
+        val p = power.coerceIn(0f, 1f)
+        val deg = K.LAUNCH_DEG_MIN + (K.LAUNCH_DEG_MAX - K.LAUNCH_DEG_MIN) * Math.pow(p.toDouble(), 0.7).toFloat()
+        return (deg * PI / 180.0).toFloat()
+    }
+
+    /** Launch speed and flight time for a throw of this power. */
+    fun launchSpeed(power: Float): Float {
+        val th = launchAngle(power)
+        return sqrt(rangeFor(power) * K.G / sin(2f * th))
+    }
+
+    fun flightTime(power: Float) = 2f * launchSpeed(power) * sin(launchAngle(power)) / K.G
 
     fun throwBoulder(power: Float, aimRad: Float): Boolean {
         if (!loaded || gameOver) return false
-        val range = rangeFor(power)
-        val th = (K.LAUNCH_DEG * PI / 180.0).toFloat()
-        val v = sqrt(range * K.G / sin(2f * th))
+        val th = launchAngle(power)
+        val v = launchSpeed(power)
         val h = v * cos(th)
         val b = Boulder(0f, K.LAUNCH_Y, 0f, h * sin(aimRad), v * sin(th), h * cos(aimRad))
         b.trail.add(floatArrayOf(b.x, b.y, b.z))
@@ -261,6 +283,7 @@ class World(private val listener: WorldListener, seed: Long = System.nanoTime())
         listener.onSound(Sfx.HURT)
         listener.onVibrate(140, 255)
         burst(h.x, 1f, 2f, 0xFF64B5F6.toInt(), 22, 18f)
+        smoke(h.x, 1f, 1.5f, 6, 0xFF6F6A64.toInt(), 2f)
         popups.add(Popup("-${h.kind.damage.toInt()} SHIELD", h.x, 3f, 0xFFFF5252.toInt(), big = true))
         if (shield <= 0f) {
             shield = 0f
@@ -309,15 +332,15 @@ class World(private val listener: WorldListener, seed: Long = System.nanoTime())
             b.trail.add(floatArrayOf(b.x, b.y, b.z))
 
             val h = hazard
-            // Direct hit on the way down.
-            if (h != null && b.vy < 0f) {
+            // Direct hit, rising or falling (flat throws can hit on the way out).
+            if (h != null) {
                 val d = hypot(b.x - h.x, b.z - h.z)
                 if (d < h.kind.radius + K.BOULDER_R && b.y < h.y + h.kind.height + K.BOULDER_R * 0.5f) {
                     b.landX = b.x; b.landZ = b.z
                     b.hit = true
                     b.gone = true
                     marks.add(Mark(b.x, b.z, true))
-                    burst(b.x, b.y, b.z, 0xFF8A8580.toInt(), 10, 14f)
+                    burst(b.x, b.y, b.z, 0xFF77706A.toInt(), 10, 14f)
                     strike(h)
                     continue
                 }
@@ -339,7 +362,8 @@ class World(private val listener: WorldListener, seed: Long = System.nanoTime())
                 }
                 marks.add(Mark(b.x, b.z, struck))
                 if (!struck) {
-                    burst(b.x, 0.3f, b.z, 0xFFA1887F.toInt(), 12, 10f)
+                    burst(b.x, 0.3f, b.z, 0xFF5C4A3A.toInt(), 12, 10f)
+                    smoke(b.x, 0.5f, b.z, 4, 0xFF8D7B68.toInt(), 1.4f)
                     listener.onSound(Sfx.LAND)
                     listener.onVibrate(12, 60)
                 }
@@ -377,12 +401,13 @@ class World(private val listener: WorldListener, seed: Long = System.nanoTime())
             listener.onSound(Sfx.BREAK)
             listener.onVibrate(45, 200)
             val color = when (h.kind) {
-                Kind.BARREL -> 0xFF8B5A2B.toInt()
-                Kind.ROCK -> 0xFF7B6F63.toInt()
-                else -> 0xFF4CAF50.toInt()
+                Kind.BARREL -> 0xFF4E5340.toInt()
+                Kind.ROCK -> 0xFF6E655B.toInt()
+                else -> 0xFF4A3B26.toInt()
             }
-            burst(h.x, h.kind.height * 0.5f, h.z, color, 28, 22f)
-            burst(h.x, h.kind.height * 0.5f, h.z, 0xFFFFD54F.toInt(), 8, 16f)
+            burst(h.x, h.kind.height * 0.5f, h.z, color, 26, 22f)
+            if (h.kind == Kind.BARREL) fire(h.x, 2f, h.z, 14)
+            smoke(h.x, 1.5f, h.z, 9, if (h.kind == Kind.BARREL) 0xFF3A3632.toInt() else 0xFF8D7B68.toInt(), 2.2f)
             popups.add(Popup("+$pts", h.x, h.z, 0xFFFFFFFF.toInt(), big = true))
             if (streak % 5 == 0) showBanner("STREAK! x$multiplier POINTS")
             return
@@ -417,7 +442,7 @@ class World(private val listener: WorldListener, seed: Long = System.nanoTime())
 
     private fun burst(x: Float, y: Float, z: Float, color: Int, count: Int, speed: Float) {
         for (i in 0 until count) {
-            if (particles.size > 500) return
+            if (particles.size > 600) return
             val a = rnd.nextFloat() * 2f * PI.toFloat()
             val s = speed * (0.3f + rnd.nextFloat() * 0.7f)
             val life = 0.5f + rnd.nextFloat() * 0.6f
@@ -425,7 +450,38 @@ class World(private val listener: WorldListener, seed: Long = System.nanoTime())
                 Particle(
                     x, y, z,
                     cos(a) * s, speed * (0.4f + rnd.nextFloat() * 0.8f), sin(a) * s,
-                    life, life, color, 0.25f + rnd.nextFloat() * 0.45f,
+                    life, life, color, 0.2f + rnd.nextFloat() * 0.4f,
+                )
+            )
+        }
+    }
+
+    /** Dust or smoke that drifts up and spreads out. */
+    private fun smoke(x: Float, y: Float, z: Float, count: Int, color: Int, size: Float) {
+        for (i in 0 until count) {
+            if (particles.size > 600) return
+            val life = 1.2f + rnd.nextFloat() * 1.2f
+            particles.add(
+                Particle(
+                    x + (rnd.nextFloat() - 0.5f) * 2f, y, z + (rnd.nextFloat() - 0.5f) * 2f,
+                    (rnd.nextFloat() - 0.5f) * 3f, 2f + rnd.nextFloat() * 3f, (rnd.nextFloat() - 0.5f) * 3f,
+                    life, life, color, size * (0.7f + rnd.nextFloat() * 0.6f), Particle.SMOKE,
+                )
+            )
+        }
+    }
+
+    /** A short bright flash of flame. */
+    private fun fire(x: Float, y: Float, z: Float, count: Int) {
+        for (i in 0 until count) {
+            if (particles.size > 600) return
+            val a = rnd.nextFloat() * 2f * PI.toFloat()
+            val s = 4f + rnd.nextFloat() * 8f
+            val life = 0.25f + rnd.nextFloat() * 0.3f
+            particles.add(
+                Particle(
+                    x, y, z, cos(a) * s, 3f + rnd.nextFloat() * 6f, sin(a) * s,
+                    life, life, 0xFFFFA726.toInt(), 0.8f + rnd.nextFloat() * 0.8f, Particle.FIRE,
                 )
             )
         }
@@ -435,7 +491,11 @@ class World(private val listener: WorldListener, seed: Long = System.nanoTime())
         val pi = particles.iterator()
         while (pi.hasNext()) {
             val p = pi.next()
-            p.vy -= K.G * 0.6f * dt
+            if (p.type == Particle.DEBRIS) p.vy -= K.G * 0.6f * dt else {
+                p.vx *= max(0f, 1f - 1.5f * dt)
+                p.vz *= max(0f, 1f - 1.5f * dt)
+                if (p.type == Particle.SMOKE) p.vy *= max(0f, 1f - 0.6f * dt) else p.vy *= max(0f, 1f - 3f * dt)
+            }
             p.x += p.vx * dt
             p.y += p.vy * dt
             p.z += p.vz * dt
