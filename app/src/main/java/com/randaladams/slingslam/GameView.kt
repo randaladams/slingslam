@@ -529,12 +529,12 @@ class GameView(context: Context, private val onExit: () -> Unit = {}) : View(con
                 is Hazard -> {
                     val s = sAt(it.z)
                     art.hazard(c, it, lx(it.x, it.z), ly(it.z, it.y), unitPx * s, false, clock)
-                    if (it.kind == Kind.BOSS) drawBossHealth(c, it, lx(it.x, it.z), ly(it.z, it.y + it.height * 2.6f + 1f), unitPx * s)
+                    if (it.kind == Kind.BOSS) drawBossHealth(c, it, lx(it.x, it.z), ly(it.z, it.y) - it.radius * 1.85f * unitPx * s - unitPx * s, unitPx * s)
                 }
                 is Boulder -> {
                     val s = sAt(it.z)
                     val r = K.BOULDER_R * unitPx * s
-                    val a = if (it.landed) ((it.life - it.rest) / 0.5f).coerceIn(0f, 1f) else 1f
+                    val a = if (it.landed) ((it.groundLife - it.rest) / 0.5f).coerceIn(0f, 1f) else 1f
                     art.boulder(c, lx(it.x, it.z), ly(it.z, it.y) - r, r, it.spin, a)
                 }
                 is Particle -> drawParticle(c, it, lx(it.x, it.z), ly(it.z, it.y), unitPx * sAt(it.z))
@@ -906,7 +906,7 @@ class GameView(context: Context, private val onExit: () -> Unit = {}) : View(con
         for (b in world.boulders) if (b !== last && !b.landed) drawShotArc(c, b, false)
 
         for (b in world.boulders) {
-            if (b.landed && b.rest > b.life - 0.4f) continue
+            if (b.landed && b.rest > b.groundLife - 0.4f) continue
             val r = K.BOULDER_R * sideScaleY * 1.3f
             art.boulder(c, sx(b.z), sy(b.y) - r, r, b.spin, 1f)
         }

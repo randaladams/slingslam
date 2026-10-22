@@ -35,6 +35,8 @@ object K {
     const val SHIELD_PER_KILL = 6f
     const val MAX_SLING = 5
     const val HAZARDS_PER_LEVEL = 6
+    const val MISS_LIFE = 7f          // seconds a missed boulder lies on the field
+    const val MAX_ON_GROUND = 40
 }
 
 enum class Kind(
@@ -51,7 +53,7 @@ enum class Kind(
     ENERGY(true, 2.0f, 4.0f, 0f, 50, 1),
     UPGRADE(true, 2.0f, 4.0f, 0f, 100, 1),
     GOLD(true, 2.0f, 4.0f, 0f, 500, 1),
-    BOSS(false, 4.0f, 6.4f, 40f, 2000, 5),
+    BOSS(false, 9.0f, 14.4f, 50f, 2500, 6),
 }
 
 class Hazard(val kind: Kind, x: Float, var z: Float, var speed: Float, val shape: FloatArray) {
@@ -84,6 +86,14 @@ class Boulder(
     var friction = 4f                     // how fast it stops rolling (drops with sling level)
     var life = 1.4f                       // seconds on the ground before it fades
     var pulled = false                    // being sucked into the boss
+    var pullT = 0f
+    var pullDelay = 0f
+    var pullDur = 1f
+    var pullX0 = 0f
+    var pullZ0 = 0f
+    val missed get() = struck.isEmpty()
+    /** Seconds it lies on the ground: misses linger, boulders that hit something fade once stopped. */
+    val groundLife get() = if (missed) K.MISS_LIFE else life
     val struck = HashSet<Hazard>()        // hazards this boulder already hit (no double hits)
 }
 
@@ -260,12 +270,22 @@ class World(private val listener: WorldListener, seed: Long = System.nanoTime())
         if (level % 10 == 0 && bossLevel != level) {
             bossLevel = level
             val shape = FloatArray(9) { 0.82f + rnd.nextFloat() * 0.22f }
-            val x = (rnd.nextFloat() * 2f - 1f) * (K.LANE_HALF - 5f)
-            val boss = Hazard(Kind.BOSS, x, K.Z_FAR + 4f, hazardSpeed * 0.42f, shape)
+            val x = (rnd.nextFloat() * 2f - 1f) * 3f
+            val boss = Hazard(Kind.BOSS, x, K.Z_FAR + 6f, hazardSpeed * 0.45f, shape)
+            // each boss is a little tougher than the last
+            boss.hp = Kind.BOSS.hp + 2 * (level / 10 - 1)
+            boss.maxHp = boss.hp
             hazards.add(boss)
-            showBanner("BOSS BOULDER!")
-            // every stone left on the field gets sucked into it
-            for (b in boulders) if (b.landed && !b.gone) b.pulled = true
+            // every stone left on the field gets sucked into it, one after another
+            var k = 0
+            for (b in boulders) {
+                if (b.landed && !b.gone && !b.pulled) {
+                    startPull(b, 0.8f + k * 0.18f)
+                    k++
+                }
+            }
+            showBanner(if (k > 0) "THE BOSS DRAWS IN $k STRAY STONE${if (k > 1) "S" else ""}!" else "BOSS BOULDER!")
+            if (k > 0) shake = 0.6f
             return
         }
         val n = waveSize
@@ -320,8 +340,19 @@ class World(private val listener: WorldListener, seed: Long = System.nanoTime())
             Kind.PLANT -> h.x = (h.baseX + sin(h.age * 1.5f) * 3f)
                 .coerceIn(-K.LANE_HALF + 2f, K.LANE_HALF - 2f)
             Kind.BOSS -> {
-                h.spin += dt * h.speed / h.radius
                 h.y = abs(sin(h.age * 3f)) * 0.3f
+                if (boulders.any { it.pulled }) {
+                    // summoning: holds still, the ground rumbles, dust swirls around it
+                    h.z += h.speed * dt
+                    shake = max(shake, 0.3f)
+                    h.spin += dt * 1.5f
+                    if (rnd.nextFloat() < dt * 25f) {
+                        val a = rnd.nextFloat() * 2f * PI.toFloat()
+                        smoke(h.x + cos(a) * h.radius * 1.3f, 0.5f, h.z + sin(a) * h.radius * 0.6f, 1, 0xFF8D7B68.toInt(), 2.5f)
+                    }
+                } else {
+                    h.spin += dt * h.speed / h.radius
+                }
             }
             else -> {
                 h.y = 1.2f + sin(h.age * 3f) * 0.6f
@@ -331,11 +362,24 @@ class World(private val listener: WorldListener, seed: Long = System.nanoTime())
         if (h.z <= K.Z_REACH) reached(h)
     }
 
+    private fun startPull(b: Boulder, delay: Float) {
+        b.pulled = true
+        b.pullT = 0f
+        b.pullDelay = delay
+        b.pullX0 = b.x
+        b.pullZ0 = b.z
+        b.vx = 0f
+        b.vz = 0f
+        val bs = boss
+        val d = if (bs != null) hypot(bs.x - b.x, bs.z - b.z) else 50f
+        b.pullDur = 0.8f + d / 70f
+    }
+
     /** A boulder sucked into the boss makes it bigger and tougher. */
     private fun growBoss(h: Hazard) {
-        h.radius = min(8f, h.radius + 0.3f)
+        h.radius = min(13f, h.radius + 0.4f)
         h.height = h.radius * 1.6f
-        h.hp = min(20, h.hp + 1)
+        h.hp = min(30, h.hp + 1)
         h.maxHp = max(h.maxHp, h.hp)
         h.flash = 0.6f
         shake = max(shake, 0.25f)
@@ -394,29 +438,86 @@ class World(private val listener: WorldListener, seed: Long = System.nanoTime())
         bannerT = 1.6f
     }
 
+    /** True from the level before a boss until the boss shows up. */
+    private val bossPending get() = level % 10 == 9 || (level % 10 == 0 && bossLevel != level)
+
+    /** Boulders on the ground knock each other around like billiard balls. */
+    private fun collideBoulders() {
+        val n = boulders.size
+        val minD = K.BOULDER_R * 2f
+        for (i in 0 until n) {
+            val a = boulders[i]
+            if (!a.landed || a.pulled || a.gone) continue
+            for (j in i + 1 until n) {
+                val b = boulders[j]
+                if (!b.landed || b.pulled || b.gone) continue
+                val dx = b.x - a.x
+                val dz = b.z - a.z
+                if (abs(dx) > minD || abs(dz) > minD) continue
+                val d = hypot(dx, dz)
+                if (d >= minD || d < 1e-4f) continue
+                val nx = dx / d
+                val nz = dz / d
+                // push apart
+                val push = (minD - d) / 2f
+                a.x -= nx * push; a.z -= nz * push
+                b.x += nx * push; b.z += nz * push
+                // equal masses: swap the velocity along the line between centres
+                val u = (a.vx - b.vx) * nx + (a.vz - b.vz) * nz
+                if (u > 0f) {
+                    val j2 = u * 0.92f
+                    a.vx -= j2 * nx; a.vz -= j2 * nz
+                    b.vx += j2 * nx; b.vz += j2 * nz
+                    if (u > 3f) {
+                        burst((a.x + b.x) / 2f, 0.8f, (a.z + b.z) / 2f, 0xFF8A8580.toInt(), 4, 6f)
+                        listener.onSound(Sfx.LAND)
+                        listener.onVibrate(10, 60)
+                    }
+                }
+            }
+        }
+    }
+
     private fun updateBoulders(dt: Float) {
+        collideBoulders()
+        // keep the field from filling up: oldest misses go first
+        var onGround = boulders.count { it.landed && !it.pulled }
+        if (onGround > K.MAX_ON_GROUND) {
+            for (b in boulders) {
+                if (onGround <= K.MAX_ON_GROUND) break
+                if (b.landed && !b.pulled && !b.gone) { b.gone = true; onGround-- }
+            }
+        }
         val bossNow = boss
         val it = boulders.iterator()
         while (it.hasNext()) {
             val b = it.next()
             if (b.gone) { it.remove(); continue }
             if (b.landed && b.pulled) {
-                // flying into the boss
                 if (bossNow == null) {
                     b.pulled = false
                 } else {
-                    val dx = bossNow.x - b.x
-                    val dz = bossNow.z - b.z
-                    val d = hypot(dx, dz)
-                    if (d < bossNow.radius) {
+                    b.pullT += dt
+                    b.rest = 0f
+                    if (b.pullT < b.pullDelay) {
+                        // trembling before it lifts off
+                        b.y = abs(sin(b.pullT * 40f)) * 0.25f
+                        b.pullX0 = b.x
+                        b.pullZ0 = b.z
+                        continue
+                    }
+                    val t = ((b.pullT - b.pullDelay) / b.pullDur).coerceIn(0f, 1f)
+                    val e = t * t
+                    val lift = 5f + hypot(bossNow.x - b.pullX0, bossNow.z - b.pullZ0) * 0.08f
+                    b.x = b.pullX0 + (bossNow.x - b.pullX0) * e
+                    b.z = b.pullZ0 + (bossNow.z - b.pullZ0) * e
+                    b.y = sin(t * PI.toFloat()) * lift + t * bossNow.height * 0.45f
+                    b.spin += dt * (6f + 20f * t)
+                    if (rnd.nextFloat() < dt * 20f) smoke(b.x, b.y, b.z, 1, 0xFF6F665C.toInt(), 0.9f)
+                    if (t >= 1f) {
                         b.gone = true
+                        burst(b.x, b.y, b.z, 0xFF77706A.toInt(), 8, 10f)
                         growBoss(bossNow)
-                    } else {
-                        val step = min(d, 45f * dt)
-                        b.x += dx / d * step
-                        b.z += dz / d * step
-                        b.spin += step * 0.5f
-                        b.rest = 0f
                     }
                     continue
                 }
@@ -444,17 +545,18 @@ class World(private val listener: WorldListener, seed: Long = System.nanoTime())
                         }
                     }
                 }
-                if (b.struck.isEmpty()) {
+                // Only misses stay on the field; boulders that hit something fade once they stop.
+                val life = b.groundLife
+                if (b.missed) {
                     if (bossNow != null && b.z < bossNow.z) {
                         // fell short of the boss: it gets sucked in
-                        b.pulled = true
-                    } else if (bossNow == null && level % 10 == 9) {
-                        // the level before a boss: misses stay on the field
-                        b.rest = min(b.rest, b.life - 0.6f)
+                        startPull(b, 0.15f)
+                    } else if (bossPending) {
+                        // before a boss: misses stay until it arrives
+                        b.rest = min(b.rest, life - 0.6f)
                     }
                 }
-                if (b.rest > b.life) it.remove()
-                if (b.z > K.Z_FAR + 30f || abs(b.x) > K.LANE_HALF * 4f) it.remove()
+                if (b.rest > life || b.z > K.Z_FAR + 30f || abs(b.x) > K.LANE_HALF * 4f) it.remove()
                 continue
             }
             b.vy -= K.G * dt
