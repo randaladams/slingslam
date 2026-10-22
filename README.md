@@ -13,13 +13,15 @@ An Android game: lob boulders at the hazards rolling toward you before they smas
   - Oil drum: rolls straight at you
   - Boulder: slower, takes two hits (a cracked one slows down)
   - Thorn bramble: creeps and weaves side to side
-  - **Boss boulder** (every 10th level): slow, takes 5 hits, with a health bar overhead. Any boulder that lands short of it gets rolled up into it, making it bigger and adding a hit.
+  - **Boss boulder** (every 10th level): slow, takes 5 hits, with a health bar overhead. When it appears it sucks in every stone left on the field, and during the fight any shot that lands short of it gets sucked in too. Each stone makes it bigger and adds a hit. Shots that land past it are safe. In the level before a boss, missed shots stay on the field, so don't miss.
 - **Bonuses** (hit them to collect):
   - Power cell case: +30 shield
-  - Ammo crate: sling upgrade (faster reload, bigger impact). At sling level 5, boulders keep rolling after impact and can smash more than one hazard.
+  - Ammo crate: sling upgrade (faster reload, bigger impact, longer roll). Boulders roll a little after landing at first and farther with each upgrade, and can smash hazards they roll into. At sling level 5 they also keep rolling after a direct hit.
   - Gold bars: +500 points
 - **Points** float up over what you smashed, then fly to the scoreboard and tick in when they arrive.
 - **Streaks:** every 5 smashes in a row raises your points multiplier. Letting something through resets it.
+- **Menus:** the pause menu has Resume and End game, game over has Play again and Menu, and the title screen has Exit.
+- **Testing:** the − / + buttons beside the level number jump levels. Remove them before release.
 - The bottom strip of the screen is kept clear for a banner ad.
 
 ## Install on your phone

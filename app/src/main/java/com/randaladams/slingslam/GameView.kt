@@ -38,7 +38,7 @@ import kotlin.math.sin
  *   Ad strip       kept clear for a banner ad
  */
 @SuppressLint("ViewConstructor")
-class GameView(context: Context) : View(context), WorldListener {
+class GameView(context: Context, private val onExit: () -> Unit = {}) : View(context), WorldListener {
 
     private enum class Mode { TITLE, PLAYING, PAUSED, OVER }
 
@@ -88,6 +88,10 @@ class GameView(context: Context) : View(context), WorldListener {
     private var pileY = 0f
     private val pauseBtn = RectF()
     private val soundBtn = RectF()
+    private val levelDown = RectF()      // TESTING: remove before release
+    private val levelUp = RectF()        // TESTING: remove before release
+    private val btnA = RectF()           // menu buttons (resume / play again)
+    private val btnB = RectF()           // menu buttons (end game / menu / exit)
 
     // ---- pre-painted scenery ----
     private var laneBmp: Bitmap? = null
@@ -231,6 +235,10 @@ class GameView(context: Context) : View(context), WorldListener {
         val b = hudH * 0.62f
         pauseBtn.set(w - b - w * 0.03f, hudTop + hudH * 0.06f, w - w * 0.03f, hudTop + hudH * 0.06f + b)
         soundBtn.set(pauseBtn.left - b - w * 0.025f, pauseBtn.top, pauseBtn.left - w * 0.025f, pauseBtn.bottom)
+        val lb = hudH * 0.42f
+        val lcy = hudTop + hudH * 0.32f
+        levelDown.set(w * 0.5f - w * 0.17f - lb, lcy - lb / 2f, w * 0.5f - w * 0.17f, lcy + lb / 2f)
+        levelUp.set(w * 0.5f + w * 0.17f, lcy - lb / 2f, w * 0.5f + w * 0.17f + lb, lcy + lb / 2f)
 
         val d = w * 0.012f
         dash = DashPathEffect(floatArrayOf(d * 1.6f, d), 0f)
@@ -298,14 +306,31 @@ class GameView(context: Context) : View(context), WorldListener {
                     return true
                 }
                 when (mode) {
-                    Mode.TITLE -> if (e.actionMasked == MotionEvent.ACTION_DOWN) startGame()
-                    Mode.OVER -> if (overT > 0.9f && e.actionMasked == MotionEvent.ACTION_DOWN) startGame()
+                    Mode.TITLE -> if (e.actionMasked == MotionEvent.ACTION_DOWN) {
+                        layoutMenu(Mode.TITLE)
+                        if (btnB.contains(x, y)) onExit() else startGame()
+                    }
+                    Mode.OVER -> if (overT > 0.9f && e.actionMasked == MotionEvent.ACTION_DOWN) {
+                        layoutMenu(Mode.OVER)
+                        if (btnA.contains(x, y)) startGame()
+                        else if (btnB.contains(x, y)) mode = Mode.TITLE
+                    }
                     Mode.PAUSED -> if (e.actionMasked == MotionEvent.ACTION_DOWN) {
-                        mode = Mode.PLAYING
-                        lastNs = 0L
+                        layoutMenu(Mode.PAUSED)
+                        if (btnA.contains(x, y)) {
+                            mode = Mode.PLAYING
+                            lastNs = 0L
+                        } else if (btnB.contains(x, y)) {
+                            world.gameOver = true
+                            endGame()
+                        }
                     }
                     Mode.PLAYING -> {
-                        if (inflate(pauseBtn).contains(x, y)) {
+                        if (inflate(levelDown).contains(x, y) && y < sideTop) {
+                            world.debugSetLevel(world.level - 1)
+                        } else if (inflate(levelUp).contains(x, y) && y < sideTop) {
+                            world.debugSetLevel(world.level + 1)
+                        } else if (inflate(pauseBtn).contains(x, y)) {
                             mode = Mode.PAUSED
                             aiming = false
                         } else if (!aiming && hypot(x - slingX, y - slingY) < slingR * 1.8f) {
@@ -538,6 +563,8 @@ class GameView(context: Context) : View(context), WorldListener {
         if (bn != null && world.bannerT > 0f) {
             val a = min(1f, world.bannerT / 0.4f)
             text.textSize = w * 0.07f
+            val tw = text.measureText(bn)
+            if (tw > w * 0.92f) text.textSize *= w * 0.92f / tw
             text.color = amber
             text.alpha = (a * 255).toInt()
             outlinedText(c, bn, w / 2f, horizonY + (groundY - horizonY) * 0.3f)
@@ -965,6 +992,17 @@ class GameView(context: Context) : View(context), WorldListener {
         text.textSize = hudH * 0.3f
         text.color = amber
         c.drawText("LEVEL ${world.level}", w * 0.5f, rowY, text)
+        // TESTING: level -/+ buttons (remove before release)
+        if (mode == Mode.PLAYING) {
+            for ((r, label) in listOf(levelDown to "−", levelUp to "+")) {
+                paint.shader = null
+                paint.color = 0x44E6DCC2
+                c.drawRoundRect(r, r.height() * 0.2f, r.height() * 0.2f, paint)
+                text.textSize = r.height() * 0.85f
+                text.color = khaki
+                c.drawText(label, r.centerX(), r.centerY() + r.height() * 0.3f, text)
+            }
+        }
 
         // pause
         paint.color = 0x33E6DCC2
@@ -1077,12 +1115,14 @@ class GameView(context: Context) : View(context), WorldListener {
 
         text.textSize = w * 0.065f
         text.color = Color.argb((170 + 85 * sin(clock * 4f)).toInt(), 242, 180, 81)
-        outlinedText(c, "TAP TO START", w / 2f, h * 0.86f)
+        outlinedText(c, "TAP TO START", w / 2f, h * 0.835f)
         if (best > 0) {
             text.textSize = w * 0.04f
             text.color = khaki
-            c.drawText("BEST  $best", w / 2f, h * 0.9f, text)
+            c.drawText("BEST  $best", w / 2f, h * 0.865f, text)
         }
+        layoutMenu(Mode.TITLE)
+        drawButton(c, btnB, "EXIT", false)
     }
 
     private fun drawPaused(c: Canvas) {
@@ -1090,10 +1130,45 @@ class GameView(context: Context) : View(context), WorldListener {
         text.textAlign = Paint.Align.CENTER
         text.textSize = w * 0.12f
         text.color = khaki
-        outlinedText(c, "PAUSED", w / 2f, h * 0.45f)
-        text.textSize = w * 0.05f
-        text.color = Color.argb(220, 230, 220, 194)
-        c.drawText("Tap to resume", w / 2f, h * 0.52f, text)
+        outlinedText(c, "PAUSED", w / 2f, h * 0.4f)
+        layoutMenu(Mode.PAUSED)
+        drawButton(c, btnA, "RESUME", true)
+        drawButton(c, btnB, "END GAME", false)
+    }
+
+    /** Places the two menu buttons for the given screen. */
+    private fun layoutMenu(m: Mode) {
+        val bw = w * 0.56f
+        val bh = h * 0.062f
+        when (m) {
+            Mode.TITLE -> {
+                btnA.set(0f, 0f, 0f, 0f)
+                val ew = w * 0.32f
+                btnB.set(w / 2f - ew / 2f, h * 0.88f, w / 2f + ew / 2f, h * 0.88f + bh * 0.75f)
+            }
+            Mode.PAUSED -> {
+                btnA.set(w / 2f - bw / 2f, h * 0.46f, w / 2f + bw / 2f, h * 0.46f + bh)
+                btnB.set(w / 2f - bw / 2f, h * 0.55f, w / 2f + bw / 2f, h * 0.55f + bh)
+            }
+            else -> {
+                btnA.set(w / 2f - bw / 2f, h * 0.69f, w / 2f + bw / 2f, h * 0.69f + bh)
+                btnB.set(w / 2f - bw / 2f, h * 0.78f, w / 2f + bw / 2f, h * 0.78f + bh)
+            }
+        }
+    }
+
+    private fun drawButton(c: Canvas, r: RectF, label: String, primary: Boolean) {
+        paint.shader = null
+        paint.color = if (primary) 0xFFB8862E.toInt() else 0xFF3A3D40.toInt()
+        c.drawRoundRect(r, r.height() * 0.18f, r.height() * 0.18f, paint)
+        stroke.pathEffect = null
+        stroke.color = if (primary) 0xFFF2B451.toInt() else 0xFF8A8D90.toInt()
+        stroke.strokeWidth = r.height() * 0.05f
+        c.drawRoundRect(r, r.height() * 0.18f, r.height() * 0.18f, stroke)
+        text.textAlign = Paint.Align.CENTER
+        text.textSize = r.height() * 0.42f
+        text.color = if (primary) 0xFF1A1408.toInt() else khaki
+        c.drawText(label, r.centerX(), r.centerY() + text.textSize * 0.36f, text)
     }
 
     private fun drawGameOver(c: Canvas) {
@@ -1119,9 +1194,9 @@ class GameView(context: Context) : View(context), WorldListener {
         c.drawText("Level ${world.level}   •   Smashed ${world.smashed}", w / 2f, h * 0.58f, text)
         c.drawText("Accuracy $acc%   •   Best streak ${world.bestStreak}", w / 2f, h * 0.62f, text)
         if (overT > 0.9f) {
-            text.textSize = w * 0.065f
-            text.color = Color.argb((170 + 85 * sin(clock * 4f)).toInt(), 242, 180, 81)
-            outlinedText(c, "TAP TO PLAY AGAIN", w / 2f, h * 0.74f)
+            layoutMenu(Mode.OVER)
+            drawButton(c, btnA, "PLAY AGAIN", true)
+            drawButton(c, btnB, "MENU", false)
         }
     }
 

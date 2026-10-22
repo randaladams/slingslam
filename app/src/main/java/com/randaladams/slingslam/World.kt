@@ -79,9 +79,12 @@ class Boulder(
     var spin = 0f
     var landX = 0f
     var landZ = 0f
-    var rolls = false                     // sling level 5: keeps rolling after impact
+    var rolls = false                     // sling level 5: drops and keeps rolling after a direct hit
+    var rollKeep = 0.25f                  // share of speed kept on landing (grows with sling level)
+    var friction = 4f                     // how fast it stops rolling (drops with sling level)
+    var life = 1.4f                       // seconds on the ground before it fades
+    var pulled = false                    // being sucked into the boss
     val struck = HashSet<Hazard>()        // hazards this boulder already hit (no double hits)
-    val life get() = if (rolls) 2.6f else 1.4f   // seconds on the ground before it fades
 }
 
 class Particle(
@@ -197,7 +200,12 @@ class World(private val listener: WorldListener, seed: Long = System.nanoTime())
         val h = v * cos(th)
         val b = Boulder(0f, K.LAUNCH_Y, 0f, h * sin(aimRad), v * sin(th), h * cos(aimRad))
         b.trail.add(floatArrayOf(b.x, b.y, b.z))
+        // Boulders roll a little at first and farther as the sling is upgraded.
+        val lv = (slingLevel - 1).toFloat() / (K.MAX_SLING - 1)
         b.rolls = slingLevel >= K.MAX_SLING
+        b.rollKeep = 0.25f + 0.2f * lv
+        b.friction = 4f - 2.4f * lv
+        b.life = 1.4f + 1.2f * lv
         boulders.add(b)
         lastShot = b
         loaded = false
@@ -253,8 +261,11 @@ class World(private val listener: WorldListener, seed: Long = System.nanoTime())
             bossLevel = level
             val shape = FloatArray(9) { 0.82f + rnd.nextFloat() * 0.22f }
             val x = (rnd.nextFloat() * 2f - 1f) * (K.LANE_HALF - 5f)
-            hazards.add(Hazard(Kind.BOSS, x, K.Z_FAR + 4f, hazardSpeed * 0.42f, shape))
+            val boss = Hazard(Kind.BOSS, x, K.Z_FAR + 4f, hazardSpeed * 0.42f, shape)
+            hazards.add(boss)
             showBanner("BOSS BOULDER!")
+            // every stone left on the field gets sucked into it
+            for (b in boulders) if (b.landed && !b.gone) b.pulled = true
             return
         }
         val n = waveSize
@@ -311,7 +322,6 @@ class World(private val listener: WorldListener, seed: Long = System.nanoTime())
             Kind.BOSS -> {
                 h.spin += dt * h.speed / h.radius
                 h.y = abs(sin(h.age * 3f)) * 0.3f
-                absorbShortBoulders(h)
             }
             else -> {
                 h.y = 1.2f + sin(h.age * 3f) * 0.6f
@@ -321,24 +331,27 @@ class World(private val listener: WorldListener, seed: Long = System.nanoTime())
         if (h.z <= K.Z_REACH) reached(h)
     }
 
-    /** The boss rolls over boulders that fell short and grows bigger and tougher. */
-    private fun absorbShortBoulders(h: Hazard) {
-        for (b in boulders) {
-            if (!b.landed || b.gone || b.struck.contains(h)) continue
-            if (hypot(b.vx, b.vz) > 3f) continue
-            if (hypot(b.x - h.x, b.z - h.z) < h.radius + K.BOULDER_R * 0.5f) {
-                b.gone = true
-                h.radius = min(7.5f, h.radius + 0.35f)
-                h.height = h.radius * 1.6f
-                h.hp = min(15, h.hp + 1)
-                h.maxHp = max(h.maxHp, h.hp)
-                h.flash = 0.6f
-                shake = max(shake, 0.3f)
-                popups.add(Popup("BOSS GREW!", h.x, h.z, 0xFFFF8A65.toInt()))
-                listener.onSound(Sfx.HIT)
-                listener.onVibrate(40, 120)
-            }
-        }
+    /** A boulder sucked into the boss makes it bigger and tougher. */
+    private fun growBoss(h: Hazard) {
+        h.radius = min(8f, h.radius + 0.3f)
+        h.height = h.radius * 1.6f
+        h.hp = min(20, h.hp + 1)
+        h.maxHp = max(h.maxHp, h.hp)
+        h.flash = 0.6f
+        shake = max(shake, 0.25f)
+        popups.add(Popup("BOSS GREW!", h.x, h.z, 0xFFFF8A65.toInt()))
+        listener.onSound(Sfx.HIT)
+        listener.onVibrate(40, 120)
+    }
+
+    /** Testing aid: jump straight to a level. */
+    fun debugSetLevel(n: Int) {
+        level = n.coerceIn(1, 99)
+        resolved = (level - 1) * K.HAZARDS_PER_LEVEL
+        bossLevel = 0
+        hazards.clear()
+        spawnTimer = 0.6f
+        showBanner("LEVEL $level")
     }
 
     private fun reached(h: Hazard) {
@@ -370,7 +383,7 @@ class World(private val listener: WorldListener, seed: Long = System.nanoTime())
         val newLevel = 1 + resolved / K.HAZARDS_PER_LEVEL
         if (newLevel > level) {
             level = newLevel
-            showBanner("LEVEL $level")
+            showBanner(if (level % 10 == 9) "LEVEL $level — BOSS NEXT! MISSES STAY ON THE FIELD" else "LEVEL $level")
         }
         spawnTimer = spawnDelay
         if (level % 10 == 0 && bossLevel != level) showBanner("LEVEL $level — BOSS INCOMING")
@@ -387,17 +400,37 @@ class World(private val listener: WorldListener, seed: Long = System.nanoTime())
         while (it.hasNext()) {
             val b = it.next()
             if (b.gone) { it.remove(); continue }
+            if (b.landed && b.pulled) {
+                // flying into the boss
+                if (bossNow == null) {
+                    b.pulled = false
+                } else {
+                    val dx = bossNow.x - b.x
+                    val dz = bossNow.z - b.z
+                    val d = hypot(dx, dz)
+                    if (d < bossNow.radius) {
+                        b.gone = true
+                        growBoss(bossNow)
+                    } else {
+                        val step = min(d, 45f * dt)
+                        b.x += dx / d * step
+                        b.z += dz / d * step
+                        b.spin += step * 0.5f
+                        b.rest = 0f
+                    }
+                    continue
+                }
+            }
             if (b.landed) {
                 b.rest += dt
                 b.x += b.vx * dt
                 b.z += b.vz * dt
-                val friction = if (b.rolls) 0.7f else 4f
-                b.vx *= max(0f, 1f - friction * dt)
-                b.vz *= max(0f, 1f - friction * dt)
+                b.vx *= max(0f, 1f - b.friction * dt)
+                b.vz *= max(0f, 1f - b.friction * dt)
                 val sp = hypot(b.vx, b.vz)
                 b.spin += sp * dt * 0.5f
-                // a rolling boulder can plough into more hazards
-                if (b.rolls && sp > 2f) {
+                // a rolling boulder can plough into hazards
+                if (sp > 2f) {
                     for (i in hazards.indices.reversed()) {
                         if (i >= hazards.size) continue
                         val h = hazards[i]
@@ -411,11 +444,16 @@ class World(private val listener: WorldListener, seed: Long = System.nanoTime())
                         }
                     }
                 }
-                // Short boulders wait on the ground for a boss to roll over them.
-                val waiting = bossNow != null && b.z < bossNow.z && !b.struck.contains(bossNow)
-                val life = b.life
-                if (waiting) b.rest = min(b.rest, life - 0.6f)
-                if (b.rest > life) it.remove()
+                if (b.struck.isEmpty()) {
+                    if (bossNow != null && b.z < bossNow.z) {
+                        // fell short of the boss: it gets sucked in
+                        b.pulled = true
+                    } else if (bossNow == null && level % 10 == 9) {
+                        // the level before a boss: misses stay on the field
+                        b.rest = min(b.rest, b.life - 0.6f)
+                    }
+                }
+                if (b.rest > b.life) it.remove()
                 if (b.z > K.Z_FAR + 30f || abs(b.x) > K.LANE_HALF * 4f) it.remove()
                 continue
             }
@@ -459,8 +497,7 @@ class World(private val listener: WorldListener, seed: Long = System.nanoTime())
                 b.y = 0f
                 b.landed = true
                 b.landX = b.x; b.landZ = b.z
-                val keep = if (b.rolls) 0.7f else 0.25f
-                b.vx *= keep; b.vz *= keep
+                b.vx *= b.rollKeep; b.vz *= b.rollKeep
                 var struckAny = false
                 for (i in hazards.indices.reversed()) {
                     if (i >= hazards.size) continue
