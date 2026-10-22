@@ -53,7 +53,7 @@ enum class Kind(
     ENERGY(true, 2.0f, 4.0f, 0f, 50, 1),
     UPGRADE(true, 2.0f, 4.0f, 0f, 100, 1),
     GOLD(true, 2.0f, 4.0f, 0f, 500, 1),
-    BOSS(false, 9.0f, 14.4f, 50f, 2500, 6),
+    BOSS(false, 4.0f, 6.4f, 40f, 2000, 5),
 }
 
 class Hazard(val kind: Kind, x: Float, var z: Float, var speed: Float, val shape: FloatArray) {
@@ -141,6 +141,11 @@ interface WorldListener {
 }
 
 class World(private val listener: WorldListener, seed: Long = System.nanoTime()) {
+    companion object {
+        /** Rolling resistance after a billiard knock: low, so a hard hit rolls a long way. */
+        const val BILLIARD_FRICTION = 0.55f
+    }
+
     private val rnd = Random(seed)
 
     var score = 0
@@ -273,7 +278,7 @@ class World(private val listener: WorldListener, seed: Long = System.nanoTime())
             val x = (rnd.nextFloat() * 2f - 1f) * 3f
             val boss = Hazard(Kind.BOSS, x, K.Z_FAR + 6f, hazardSpeed * 0.45f, shape)
             // each boss is a little tougher than the last
-            boss.hp = Kind.BOSS.hp + 2 * (level / 10 - 1)
+            boss.hp = Kind.BOSS.hp + (level / 10 - 1)
             boss.maxHp = boss.hp
             hazards.add(boss)
             // every stone left on the field gets sucked into it, one after another
@@ -377,9 +382,9 @@ class World(private val listener: WorldListener, seed: Long = System.nanoTime())
 
     /** A boulder sucked into the boss makes it bigger and tougher. */
     private fun growBoss(h: Hazard) {
-        h.radius = min(13f, h.radius + 0.4f)
+        h.radius = min(9f, h.radius + 0.35f)
         h.height = h.radius * 1.6f
-        h.hp = min(30, h.hp + 1)
+        h.hp = min(25, h.hp + 1)
         h.maxHp = max(h.maxHp, h.hp)
         h.flash = 0.6f
         shake = max(shake, 0.25f)
@@ -427,7 +432,7 @@ class World(private val listener: WorldListener, seed: Long = System.nanoTime())
         val newLevel = 1 + resolved / K.HAZARDS_PER_LEVEL
         if (newLevel > level) {
             level = newLevel
-            showBanner(if (level % 10 == 9) "LEVEL $level — BOSS NEXT! MISSES STAY ON THE FIELD" else "LEVEL $level")
+            showBanner(if (level % 10 == 9) "LEVEL $level — BOSS NEXT! KEEP THE FIELD CLEAR" else "LEVEL $level")
         }
         spawnTimer = spawnDelay
         if (level % 10 == 0 && bossLevel != level) showBanner("LEVEL $level — BOSS INCOMING")
@@ -437,9 +442,6 @@ class World(private val listener: WorldListener, seed: Long = System.nanoTime())
         banner = s
         bannerT = 1.6f
     }
-
-    /** True from the level before a boss until the boss shows up. */
-    private val bossPending get() = level % 10 == 9 || (level % 10 == 0 && bossLevel != level)
 
     /** Boulders on the ground knock each other around like billiard balls. */
     private fun collideBoulders() {
@@ -465,9 +467,7 @@ class World(private val listener: WorldListener, seed: Long = System.nanoTime())
                 // equal masses: swap the velocity along the line between centres
                 val u = (a.vx - b.vx) * nx + (a.vz - b.vz) * nz
                 if (u > 0f) {
-                    val j2 = u * 0.92f
-                    a.vx -= j2 * nx; a.vz -= j2 * nz
-                    b.vx += j2 * nx; b.vz += j2 * nz
+                    knock(a, b, nx, nz, u)
                     if (u > 3f) {
                         burst((a.x + b.x) / 2f, 0.8f, (a.z + b.z) / 2f, 0xFF8A8580.toInt(), 4, 6f)
                         listener.onSound(Sfx.LAND)
@@ -475,6 +475,20 @@ class World(private val listener: WorldListener, seed: Long = System.nanoTime())
                     }
                 }
             }
+        }
+    }
+
+    /**
+     * Equal-mass elastic hit along the line between centres (like billiard balls).
+     * Both roll on low friction afterwards, so a harder hit sends them farther.
+     */
+    private fun knock(a: Boulder, b: Boulder, nx: Float, nz: Float, u: Float) {
+        val j = u * 0.92f
+        a.vx -= j * nx; a.vz -= j * nz
+        b.vx += j * nx; b.vz += j * nz
+        for (q in arrayOf(a, b)) {
+            q.friction = min(q.friction, BILLIARD_FRICTION)
+            q.rest = min(q.rest, max(0f, q.groundLife - 3f))
         }
     }
 
@@ -551,9 +565,6 @@ class World(private val listener: WorldListener, seed: Long = System.nanoTime())
                     if (bossNow != null && b.z < bossNow.z) {
                         // fell short of the boss: it gets sucked in
                         startPull(b, 0.15f)
-                    } else if (bossPending) {
-                        // before a boss: misses stay until it arrives
-                        b.rest = min(b.rest, life - 0.6f)
                     }
                 }
                 if (b.rest > life || b.z > K.Z_FAR + 30f || abs(b.x) > K.LANE_HALF * 4f) it.remove()
@@ -599,6 +610,26 @@ class World(private val listener: WorldListener, seed: Long = System.nanoTime())
                 b.y = 0f
                 b.landed = true
                 b.landX = b.x; b.landZ = b.z
+                // landing right on a stone hits it with the full force of the throw
+                var target: Boulder? = null
+                var best = K.BOULDER_R * 2.2f
+                for (o in boulders) {
+                    if (o === b || !o.landed || o.pulled || o.gone) continue
+                    val d = hypot(o.x - b.x, o.z - b.z)
+                    if (d < best) { best = d; target = o }
+                }
+                if (target != null) {
+                    val d = max(best, 1e-3f)
+                    val nx = (target.x - b.x) / d
+                    val nz = (target.z - b.z) / d
+                    val u = b.vx * nx + b.vz * nz
+                    if (u > 0f) {
+                        knock(b, target, nx, nz, u)
+                        burst(target.x, 1f, target.z, 0xFF8A8580.toInt(), 8, 9f)
+                        listener.onSound(Sfx.HIT)
+                        listener.onVibrate(20, 120)
+                    }
+                }
                 b.vx *= b.rollKeep; b.vz *= b.rollKeep
                 var struckAny = false
                 for (i in hazards.indices.reversed()) {
