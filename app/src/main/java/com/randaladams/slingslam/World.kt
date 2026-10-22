@@ -51,6 +51,7 @@ enum class Kind(
     ENERGY(true, 2.0f, 4.0f, 0f, 50, 1),
     UPGRADE(true, 2.0f, 4.0f, 0f, 100, 1),
     GOLD(true, 2.0f, 4.0f, 0f, 500, 1),
+    BOSS(false, 4.0f, 6.4f, 40f, 2000, 5),
 }
 
 class Hazard(val kind: Kind, x: Float, var z: Float, var speed: Float, val shape: FloatArray) {
@@ -58,6 +59,9 @@ class Hazard(val kind: Kind, x: Float, var z: Float, var speed: Float, val shape
     val baseX = x
     var y = 0f
     var hp = kind.hp
+    var maxHp = kind.hp
+    var radius = kind.radius      // the boss grows, so size lives on the hazard
+    var height = kind.height
     var age = 0f
     var flash = 0f
     var spin = 0f
@@ -75,6 +79,9 @@ class Boulder(
     var spin = 0f
     var landX = 0f
     var landZ = 0f
+    var rolls = false                     // sling level 5: keeps rolling after impact
+    val struck = HashSet<Hazard>()        // hazards this boulder already hit (no double hits)
+    val life get() = if (rolls) 2.6f else 1.4f   // seconds on the ground before it fades
 }
 
 class Particle(
@@ -90,8 +97,22 @@ class Particle(
     }
 }
 
-class Popup(val text: String, val x: Float, val z: Float, val color: Int, val big: Boolean = false) {
+/**
+ * Floating text. Point popups ([value] > 0) hover over the hazard, then fly up to the
+ * scoreboard; the view banks the points and plays a tick when each one arrives.
+ */
+class Popup(
+    val text: String, val x: Float, val z: Float, val color: Int,
+    val big: Boolean = false, val value: Int = 0,
+) {
     var t = 0f
+    var arrived = false
+    val life get() = if (value > 0) FLY_END + 0.05f else 1.3f
+
+    companion object {
+        const val HOVER = 0.45f       // seconds hovering above the hazard
+        const val FLY_END = 1.05f     // reaches the scoreboard at this age
+    }
 }
 
 /** An impact ring left on the ground where a boulder landed. */
@@ -99,7 +120,7 @@ class Mark(val x: Float, val z: Float, val hit: Boolean) {
     var t = 0f
 }
 
-enum class Sfx { THROW, LAND, HIT, BREAK, HURT, PICKUP, UPGRADE, GAMEOVER }
+enum class Sfx { THROW, LAND, HIT, BREAK, HURT, PICKUP, UPGRADE, GAMEOVER, SCORE }
 
 interface WorldListener {
     fun onSound(s: Sfx)
@@ -121,8 +142,9 @@ class World(private val listener: WorldListener, seed: Long = System.nanoTime())
     var smashed = 0
     var time = 0f
 
-    var hazard: Hazard? = null
+    val hazards = ArrayList<Hazard>()
     var spawnTimer = 1.6f
+    private var bossLevel = 0         // level whose boss has already appeared
     val boulders = ArrayList<Boulder>()
     val particles = ArrayList<Particle>()
     val popups = ArrayList<Popup>()
@@ -143,6 +165,12 @@ class World(private val listener: WorldListener, seed: Long = System.nanoTime())
     val hazardSpeed get() = min(5.5f * (1f + 0.10f * (level - 1)), 30f)
     val spawnDelay get() = max(0.4f, 1.8f - 0.1f * (level - 1))
     val multiplier get() = 1 + streak / 5
+    val waveSize get() = when {
+        level >= 12 -> 3
+        level >= 7 -> 2
+        else -> 1
+    }
+    val boss: Hazard? get() = hazards.firstOrNull { it.kind == Kind.BOSS }
 
     /** Where a throw of this power would land (ignoring launch height). */
     fun rangeFor(power: Float) = K.MIN_RANGE + power.coerceIn(0f, 1f) * (K.MAX_RANGE - K.MIN_RANGE)
@@ -169,6 +197,7 @@ class World(private val listener: WorldListener, seed: Long = System.nanoTime())
         val h = v * cos(th)
         val b = Boulder(0f, K.LAUNCH_Y, 0f, h * sin(aimRad), v * sin(th), h * cos(aimRad))
         b.trail.add(floatArrayOf(b.x, b.y, b.z))
+        b.rolls = slingLevel >= K.MAX_SLING
         boulders.add(b)
         lastShot = b
         loaded = false
@@ -207,17 +236,36 @@ class World(private val listener: WorldListener, seed: Long = System.nanoTime())
             }
         }
 
-        val h = hazard
-        if (h == null) {
+        if (hazards.isEmpty()) {
             spawnTimer -= dt
-            if (spawnTimer <= 0f) spawn()
+            if (spawnTimer <= 0f) spawnWave()
         } else {
-            moveHazard(h, dt)
+            for (i in hazards.indices.reversed()) {
+                if (i < hazards.size) moveHazard(hazards[i], dt)
+            }
         }
         updateBoulders(dt)
     }
 
-    private fun spawn() {
+    /** Every 10th level opens with a boss; otherwise 1, 2 or 3 hazards come together. */
+    private fun spawnWave() {
+        if (level % 10 == 0 && bossLevel != level) {
+            bossLevel = level
+            val shape = FloatArray(9) { 0.82f + rnd.nextFloat() * 0.22f }
+            val x = (rnd.nextFloat() * 2f - 1f) * (K.LANE_HALF - 5f)
+            hazards.add(Hazard(Kind.BOSS, x, K.Z_FAR + 4f, hazardSpeed * 0.42f, shape))
+            showBanner("BOSS BOULDER!")
+            return
+        }
+        val n = waveSize
+        val band = (2f * (K.LANE_HALF - 2.5f)) / n
+        for (i in 0 until n) {
+            val x = -K.LANE_HALF + 2.5f + band * (i + 0.15f + rnd.nextFloat() * 0.7f)
+            spawnOne(x, K.Z_FAR + 2f + if (i == 0) 0f else 3f + rnd.nextFloat() * 9f)
+        }
+    }
+
+    private fun spawnOne(x: Float, z: Float) {
         val kind: Kind
         if (rnd.nextFloat() < 0.15f) {
             val g = rnd.nextFloat()
@@ -237,7 +285,6 @@ class World(private val listener: WorldListener, seed: Long = System.nanoTime())
                 else -> Kind.PLANT
             }
         }
-        val x = (rnd.nextFloat() * 2f - 1f) * (K.LANE_HALF - 3f)
         val kindSpeed = when (kind) {
             Kind.ROCK -> 0.82f
             Kind.PLANT -> 0.9f
@@ -246,7 +293,7 @@ class World(private val listener: WorldListener, seed: Long = System.nanoTime())
         }
         val speed = hazardSpeed * kindSpeed * (0.92f + rnd.nextFloat() * 0.16f)
         val shape = FloatArray(9) { 0.78f + rnd.nextFloat() * 0.3f }
-        hazard = Hazard(kind, x, K.Z_FAR + 2f, speed, shape)
+        hazards.add(Hazard(kind, x, z, speed, shape))
     }
 
     private fun moveHazard(h: Hazard, dt: Float) {
@@ -254,13 +301,18 @@ class World(private val listener: WorldListener, seed: Long = System.nanoTime())
         h.flash = max(0f, h.flash - dt * 4f)
         h.z -= h.speed * dt
         when (h.kind) {
-            Kind.BARREL -> h.spin += h.speed * dt / h.kind.radius
+            Kind.BARREL -> h.spin += h.speed * dt / h.radius
             Kind.ROCK -> {
                 h.spin += dt * h.speed * 0.15f
                 h.y = abs(sin(h.age * 5f)) * 0.5f
             }
             Kind.PLANT -> h.x = (h.baseX + sin(h.age * 1.5f) * 3f)
                 .coerceIn(-K.LANE_HALF + 2f, K.LANE_HALF - 2f)
+            Kind.BOSS -> {
+                h.spin += dt * h.speed / h.radius
+                h.y = abs(sin(h.age * 3f)) * 0.3f
+                absorbShortBoulders(h)
+            }
             else -> {
                 h.y = 1.2f + sin(h.age * 3f) * 0.6f
                 h.spin += dt * 3f
@@ -269,8 +321,28 @@ class World(private val listener: WorldListener, seed: Long = System.nanoTime())
         if (h.z <= K.Z_REACH) reached(h)
     }
 
+    /** The boss rolls over boulders that fell short and grows bigger and tougher. */
+    private fun absorbShortBoulders(h: Hazard) {
+        for (b in boulders) {
+            if (!b.landed || b.gone || b.struck.contains(h)) continue
+            if (hypot(b.vx, b.vz) > 3f) continue
+            if (hypot(b.x - h.x, b.z - h.z) < h.radius + K.BOULDER_R * 0.5f) {
+                b.gone = true
+                h.radius = min(7.5f, h.radius + 0.35f)
+                h.height = h.radius * 1.6f
+                h.hp = min(15, h.hp + 1)
+                h.maxHp = max(h.maxHp, h.hp)
+                h.flash = 0.6f
+                shake = max(shake, 0.3f)
+                popups.add(Popup("BOSS GREW!", h.x, h.z, 0xFFFF8A65.toInt()))
+                listener.onSound(Sfx.HIT)
+                listener.onVibrate(40, 120)
+            }
+        }
+    }
+
     private fun reached(h: Hazard) {
-        hazard = null
+        hazards.remove(h)
         resolveOne()
         if (h.kind.good) {
             popups.add(Popup("missed", h.x, 3f, 0xFFB0B0B0.toInt()))
@@ -301,6 +373,7 @@ class World(private val listener: WorldListener, seed: Long = System.nanoTime())
             showBanner("LEVEL $level")
         }
         spawnTimer = spawnDelay
+        if (level % 10 == 0 && bossLevel != level) showBanner("LEVEL $level — BOSS INCOMING")
     }
 
     private fun showBanner(s: String) {
@@ -309,19 +382,41 @@ class World(private val listener: WorldListener, seed: Long = System.nanoTime())
     }
 
     private fun updateBoulders(dt: Float) {
+        val bossNow = boss
         val it = boulders.iterator()
         while (it.hasNext()) {
             val b = it.next()
             if (b.gone) { it.remove(); continue }
             if (b.landed) {
                 b.rest += dt
-                // a little roll after landing
                 b.x += b.vx * dt
                 b.z += b.vz * dt
-                b.vx *= max(0f, 1f - 4f * dt)
-                b.vz *= max(0f, 1f - 4f * dt)
-                b.spin += hypot(b.vx, b.vz) * dt * 0.5f
-                if (b.rest > 1.4f) it.remove()
+                val friction = if (b.rolls) 0.7f else 4f
+                b.vx *= max(0f, 1f - friction * dt)
+                b.vz *= max(0f, 1f - friction * dt)
+                val sp = hypot(b.vx, b.vz)
+                b.spin += sp * dt * 0.5f
+                // a rolling boulder can plough into more hazards
+                if (b.rolls && sp > 2f) {
+                    for (i in hazards.indices.reversed()) {
+                        if (i >= hazards.size) continue
+                        val h = hazards[i]
+                        if (b.struck.contains(h)) continue
+                        if (hypot(b.x - h.x, b.z - h.z) < h.radius + K.BOULDER_R) {
+                            b.struck.add(h)
+                            b.hit = true
+                            b.vx *= 0.6f; b.vz *= 0.6f
+                            marks.add(Mark(b.x, b.z, true))
+                            strike(h)
+                        }
+                    }
+                }
+                // Short boulders wait on the ground for a boss to roll over them.
+                val waiting = bossNow != null && b.z < bossNow.z && !b.struck.contains(bossNow)
+                val life = b.life
+                if (waiting) b.rest = min(b.rest, life - 0.6f)
+                if (b.rest > life) it.remove()
+                if (b.z > K.Z_FAR + 30f || abs(b.x) > K.LANE_HALF * 4f) it.remove()
                 continue
             }
             b.vy -= K.G * dt
@@ -331,37 +426,55 @@ class World(private val listener: WorldListener, seed: Long = System.nanoTime())
             b.spin += dt * 6f
             b.trail.add(floatArrayOf(b.x, b.y, b.z))
 
-            val h = hazard
             // Direct hit, rising or falling (flat throws can hit on the way out).
-            if (h != null) {
+            var direct: Hazard? = null
+            for (h in hazards) {
+                if (b.struck.contains(h)) continue
                 val d = hypot(b.x - h.x, b.z - h.z)
-                if (d < h.kind.radius + K.BOULDER_R && b.y < h.y + h.kind.height + K.BOULDER_R * 0.5f) {
-                    b.landX = b.x; b.landZ = b.z
-                    b.hit = true
-                    b.gone = true
-                    marks.add(Mark(b.x, b.z, true))
-                    burst(b.x, b.y, b.z, 0xFF77706A.toInt(), 10, 14f)
-                    strike(h)
-                    continue
+                if (d < h.radius + K.BOULDER_R && b.y < h.y + h.height + K.BOULDER_R * 0.5f) {
+                    direct = h
+                    break
                 }
+            }
+            if (direct != null) {
+                b.landX = b.x; b.landZ = b.z
+                b.hit = true
+                b.struck.add(direct)
+                marks.add(Mark(b.x, b.z, true))
+                burst(b.x, b.y, b.z, 0xFF77706A.toInt(), 10, 14f)
+                if (b.rolls) {
+                    // drops and keeps rolling
+                    b.landed = true
+                    b.y = 0f
+                    b.vy = 0f
+                    b.vx *= 0.55f; b.vz *= 0.55f
+                } else {
+                    b.gone = true
+                }
+                strike(direct)
+                continue
             }
 
             if (b.y <= 0f) {
                 b.y = 0f
                 b.landed = true
                 b.landX = b.x; b.landZ = b.z
-                b.vx *= 0.25f; b.vz *= 0.25f
-                var struck = false
-                if (h != null) {
-                    val d = hypot(b.x - h.x, b.z - h.z)
-                    if (d < h.kind.radius + K.BOULDER_R * 0.7f + splash) {
-                        struck = true
+                val keep = if (b.rolls) 0.7f else 0.25f
+                b.vx *= keep; b.vz *= keep
+                var struckAny = false
+                for (i in hazards.indices.reversed()) {
+                    if (i >= hazards.size) continue
+                    val h = hazards[i]
+                    if (b.struck.contains(h)) continue
+                    if (hypot(b.x - h.x, b.z - h.z) < h.radius + K.BOULDER_R * 0.7f + splash) {
+                        struckAny = true
                         b.hit = true
+                        b.struck.add(h)
                         strike(h)
                     }
                 }
-                marks.add(Mark(b.x, b.z, struck))
-                if (!struck) {
+                marks.add(Mark(b.x, b.z, struckAny))
+                if (!struckAny) {
                     burst(b.x, 0.3f, b.z, 0xFF5C4A3A.toInt(), 12, 10f)
                     smoke(b.x, 0.5f, b.z, 4, 0xFF8D7B68.toInt(), 1.4f)
                     listener.onSound(Sfx.LAND)
@@ -377,17 +490,21 @@ class World(private val listener: WorldListener, seed: Long = System.nanoTime())
         h.hp--
         h.flash = 1f
         if (h.hp > 0) {
-            // Cracked rock: it slows down.
-            h.speed *= 0.7f
+            if (h.kind == Kind.BOSS) {
+                popups.add(Popup("${h.hp} HITS LEFT", h.x, h.z, 0xFFFFE082.toInt()))
+            } else {
+                // Cracked rock: it slows down.
+                h.speed *= 0.7f
+                popups.add(Popup("CRACK!", h.x, h.z, 0xFFFFE082.toInt()))
+            }
             shake = max(shake, 0.3f)
             listener.onSound(Sfx.HIT)
             listener.onVibrate(30, 160)
-            burst(h.x, h.kind.height * 0.5f, h.z, 0xFF7B6F63.toInt(), 14, 14f)
-            popups.add(Popup("CRACK!", h.x, h.z, 0xFFFFE082.toInt()))
+            burst(h.x, h.height * 0.5f, h.z, 0xFF7B6F63.toInt(), 14, 14f)
             return
         }
 
-        hazard = null
+        hazards.remove(h)
         resolveOne()
 
         if (!h.kind.good) {
@@ -396,19 +513,21 @@ class World(private val listener: WorldListener, seed: Long = System.nanoTime())
             bestStreak = max(bestStreak, streak)
             val pts = h.kind.points * multiplier
             score += pts
-            shield = min(K.SHIELD_MAX, shield + K.SHIELD_PER_KILL)
-            shake = max(shake, 0.45f)
+            shield = min(K.SHIELD_MAX, shield + if (h.kind == Kind.BOSS) 25f else K.SHIELD_PER_KILL)
+            shake = max(shake, if (h.kind == Kind.BOSS) 1f else 0.45f)
+            if (h.kind == Kind.BOSS) showBanner("BOSS DESTROYED!")
             listener.onSound(Sfx.BREAK)
             listener.onVibrate(45, 200)
             val color = when (h.kind) {
                 Kind.BARREL -> 0xFF4E5340.toInt()
-                Kind.ROCK -> 0xFF6E655B.toInt()
+                Kind.ROCK, Kind.BOSS -> 0xFF6E655B.toInt()
                 else -> 0xFF4A3B26.toInt()
             }
-            burst(h.x, h.kind.height * 0.5f, h.z, color, 26, 22f)
+            val big = if (h.kind == Kind.BOSS) 3 else 1
+            burst(h.x, h.height * 0.5f, h.z, color, 26 * big, 22f * (1f + (big - 1) * 0.3f))
             if (h.kind == Kind.BARREL) fire(h.x, 2f, h.z, 14)
-            smoke(h.x, 1.5f, h.z, 9, if (h.kind == Kind.BARREL) 0xFF3A3632.toInt() else 0xFF8D7B68.toInt(), 2.2f)
-            popups.add(Popup("+$pts", h.x, h.z, 0xFFFFFFFF.toInt(), big = true))
+            smoke(h.x, 1.5f, h.z, 9 * big, if (h.kind == Kind.BARREL) 0xFF3A3632.toInt() else 0xFF8D7B68.toInt(), 2.2f * big)
+            popups.add(Popup("+$pts", h.x, h.z, 0xFFFFFFFF.toInt(), big = true, value = pts))
             if (streak % 5 == 0) showBanner("STREAK! x$multiplier POINTS")
             return
         }
@@ -418,21 +537,22 @@ class World(private val listener: WorldListener, seed: Long = System.nanoTime())
                 shield = min(K.SHIELD_MAX, shield + 30f)
                 score += h.kind.points
                 popups.add(Popup("+30 SHIELD", h.x, h.z, 0xFF4DD0E1.toInt(), big = true))
+                popups.add(Popup("+${h.kind.points}", h.x, h.z, 0xFFFFFFFF.toInt(), value = h.kind.points))
                 burst(h.x, 2f, h.z, 0xFF4DD0E1.toInt(), 30, 18f)
                 listener.onSound(Sfx.PICKUP)
             }
             Kind.UPGRADE -> {
                 slingLevel = min(K.MAX_SLING, slingLevel + 1)
                 score += h.kind.points
-                showBanner("SLING UPGRADED! LV $slingLevel")
-                popups.add(Popup("FASTER RELOAD • BIGGER IMPACT", h.x, h.z, 0xFFFFEB3B.toInt()))
+                showBanner(if (slingLevel == K.MAX_SLING) "MAX SLING! BOULDERS ROLL" else "SLING UPGRADED! LV $slingLevel")
+                popups.add(Popup("+${h.kind.points}", h.x, h.z, 0xFFFFFFFF.toInt(), value = h.kind.points))
                 burst(h.x, 2f, h.z, 0xFFFFEB3B.toInt(), 30, 18f)
                 listener.onSound(Sfx.UPGRADE)
             }
             else -> {
                 val pts = h.kind.points * multiplier
                 score += pts
-                popups.add(Popup("+$pts GOLD", h.x, h.z, 0xFFFFD54F.toInt(), big = true))
+                popups.add(Popup("+$pts", h.x, h.z, 0xFFFFD54F.toInt(), big = true, value = pts))
                 burst(h.x, 2f, h.z, 0xFFFFD54F.toInt(), 30, 18f)
                 listener.onSound(Sfx.PICKUP)
             }
@@ -512,7 +632,7 @@ class World(private val listener: WorldListener, seed: Long = System.nanoTime())
         while (ui.hasNext()) {
             val p = ui.next()
             p.t += dt
-            if (p.t > 1.3f) ui.remove()
+            if (p.t > p.life) ui.remove()
         }
         val mi = marks.iterator()
         while (mi.hasNext()) {

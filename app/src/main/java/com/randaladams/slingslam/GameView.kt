@@ -47,6 +47,7 @@ class GameView(context: Context) : View(context), WorldListener {
     private val prefs = context.getSharedPreferences("slingslam", Context.MODE_PRIVATE)
     private var best = prefs.getInt("best", 0)
     private var newBest = false
+    private var shownScore = 0           // the scoreboard counts up as point popups arrive
     private var lastNs = 0L
     private var overT = 0f
     private var clock = 0f
@@ -155,6 +156,7 @@ class GameView(context: Context) : View(context), WorldListener {
         world = World(this)
         mode = Mode.PLAYING
         newBest = false
+        shownScore = 0
         aiming = false
         lastNs = 0L
     }
@@ -163,6 +165,7 @@ class GameView(context: Context) : View(context), WorldListener {
         mode = Mode.OVER
         overT = 0f
         aiming = false
+        shownScore = world.score
         if (world.score > best) {
             best = world.score
             newBest = true
@@ -392,6 +395,7 @@ class GameView(context: Context) : View(context), WorldListener {
 
         drawAdStrip(c)
         drawHud(c)
+        drawFlyingPoints(c)
 
         if (world.hurtFlash > 0f) {
             paint.shader = null
@@ -469,9 +473,9 @@ class GameView(context: Context) : View(context), WorldListener {
         // shadows
         paint.shader = null
         paint.color = Color.argb(90, 0, 0, 0)
-        world.hazard?.let { hz ->
+        for (hz in world.hazards) {
             val s = sAt(hz.z)
-            val r = hz.kind.radius * unitPx * s
+            val r = hz.radius * unitPx * s
             rect.set(lx(hz.x, hz.z) - r * 1.2f, ly(hz.z) - r * 0.28f, lx(hz.x, hz.z) + r * 1.2f, ly(hz.z) + r * 0.28f)
             c.drawOval(rect, paint)
         }
@@ -483,9 +487,8 @@ class GameView(context: Context) : View(context), WorldListener {
         }
 
         // objects, far to near
-        val hz = world.hazard
-        val items = ArrayList<Any>(world.boulders.size + world.particles.size + 1)
-        if (hz != null) items.add(hz)
+        val items = ArrayList<Any>(world.boulders.size + world.particles.size + world.hazards.size)
+        items.addAll(world.hazards)
         items.addAll(world.boulders)
         items.addAll(world.particles)
         items.sortByDescending {
@@ -501,11 +504,12 @@ class GameView(context: Context) : View(context), WorldListener {
                 is Hazard -> {
                     val s = sAt(it.z)
                     art.hazard(c, it, lx(it.x, it.z), ly(it.z, it.y), unitPx * s, false, clock)
+                    if (it.kind == Kind.BOSS) drawBossHealth(c, it, lx(it.x, it.z), ly(it.z, it.y + it.height * 2.6f + 1f), unitPx * s)
                 }
                 is Boulder -> {
                     val s = sAt(it.z)
                     val r = K.BOULDER_R * unitPx * s
-                    val a = if (it.landed) (1f - (it.rest - 0.9f) / 0.5f).coerceIn(0f, 1f) else 1f
+                    val a = if (it.landed) ((it.life - it.rest) / 0.5f).coerceIn(0f, 1f) else 1f
                     art.boulder(c, lx(it.x, it.z), ly(it.z, it.y) - r, r, it.spin, a)
                 }
                 is Particle -> drawParticle(c, it, lx(it.x, it.z), ly(it.z, it.y), unitPx * sAt(it.z))
@@ -517,6 +521,7 @@ class GameView(context: Context) : View(context), WorldListener {
 
         // floating score text
         for (p in world.popups) {
+            if (p.value > 0) continue   // point popups are drawn on top, flying to the scoreboard
             val a = (1f - p.t / 1.3f).coerceIn(0f, 1f)
             val s = sAt(p.z)
             text.textSize = (if (p.big) w * 0.06f else w * 0.04f) * (0.6f + 0.4f * s)
@@ -585,6 +590,73 @@ class GameView(context: Context) : View(context), WorldListener {
             }
         }
         paint.alpha = 255
+    }
+
+    /** Segmented health bar floating over the boss. */
+    private fun drawBossHealth(c: Canvas, hz: Hazard, cx: Float, cy: Float, u: Float) {
+        val n = hz.maxHp
+        val segW = max(4f, u * 0.9f)
+        val gap = segW * 0.25f
+        val total = n * segW + (n - 1) * gap
+        var x = cx - total / 2f
+        val hh = max(3f, u * 0.35f)
+        paint.shader = null
+        for (i in 0 until n) {
+            paint.color = if (i < hz.hp) 0xFFD2452F.toInt() else 0x66000000
+            c.drawRect(x, cy - hh, x + segW, cy, paint)
+            x += segW + gap
+        }
+    }
+
+    /**
+     * Point popups hover over what you smashed, then shoot up to the score and fade.
+     * Each one adds to the scoreboard (with a tick) when it gets there.
+     */
+    private fun drawFlyingPoints(c: Canvas) {
+        val targetX = w * 0.04f + w * 0.05f
+        val targetY = hudTop + hudH * 0.32f
+        text.textAlign = Paint.Align.CENTER
+        for (p in world.popups) {
+            if (p.value <= 0) continue
+            val s = sAt(p.z)
+            val startX = lx(p.x, p.z).coerceIn(w * 0.15f, w * 0.85f)
+            val startY = ly(p.z, 8f)
+            val x: Float
+            val y: Float
+            val a: Float
+            val size: Float
+            val base = w * 0.06f * (0.6f + 0.4f * s)
+            if (p.t < Popup.HOVER) {
+                val k = p.t / Popup.HOVER
+                x = startX
+                y = startY - k * h * 0.025f
+                a = 1f
+                size = base * (0.8f + 0.2f * min(1f, k * 3f))
+            } else {
+                val k = ((p.t - Popup.HOVER) / (Popup.FLY_END - Popup.HOVER)).coerceIn(0f, 1f)
+                val e = k * k
+                val fromY = startY - h * 0.025f
+                x = startX + (targetX - startX) * e
+                y = fromY + (targetY - fromY) * e
+                a = 1f - 0.75f * k
+                size = base * (1f - 0.55f * e)
+            }
+            if (!p.arrived && p.t >= Popup.FLY_END) {
+                p.arrived = true
+                shownScore = min(world.score, shownScore + p.value)
+                sfx.play(Sfx.SCORE)
+            }
+            if (p.arrived) continue
+            text.textSize = size
+            text.color = p.color
+            text.alpha = (a * 255).toInt()
+            outlinedText(c, p.text, x, y)
+            text.alpha = 255
+        }
+        // never let the board lag behind once popups are gone
+        if (world.popups.none { it.value > 0 && !it.arrived } && shownScore != world.score && mode != Mode.PLAYING) {
+            shownScore = world.score
+        }
     }
 
     private fun drawSandbags(c: Canvas) {
@@ -797,8 +869,8 @@ class GameView(context: Context) : View(context), WorldListener {
         c.drawLine(px + w * 0.014f, sideGround, px + w * 0.014f, sideGround - sideScaleY * 6.5f, stroke)
 
         // hazard (drawn a bit larger than true scale so it reads at this size)
-        world.hazard?.let { hz ->
-            art.hazard(c, hz, sx(hz.z), sy(hz.y), sideScaleY * 1.5f, true, clock)
+        for (hz in world.hazards) {
+            art.hazard(c, hz, sx(hz.z), sy(hz.y), sideScaleY * (if (hz.kind == Kind.BOSS) 1.1f else 1.5f), true, clock)
         }
 
         // the last shot's arc and where it came down
@@ -807,7 +879,7 @@ class GameView(context: Context) : View(context), WorldListener {
         for (b in world.boulders) if (b !== last && !b.landed) drawShotArc(c, b, false)
 
         for (b in world.boulders) {
-            if (b.landed && b.rest > 1.0f) continue
+            if (b.landed && b.rest > b.life - 0.4f) continue
             val r = K.BOULDER_R * sideScaleY * 1.3f
             art.boulder(c, sx(b.z), sy(b.y) - r, r, b.spin, 1f)
         }
@@ -883,7 +955,7 @@ class GameView(context: Context) : View(context), WorldListener {
         text.textSize = hudH * 0.34f
         text.color = khaki
         text.textAlign = Paint.Align.LEFT
-        val scoreStr = "${world.score}"
+        val scoreStr = "$shownScore"
         c.drawText(scoreStr, w * 0.04f, rowY, text)
         val scoreW = text.measureText(scoreStr)
         text.textSize = hudH * 0.19f

@@ -81,10 +81,10 @@ class Sprites {
 
     /** Draws a hazard standing on (cx, bottom). [u] is pixels per world unit there. */
     fun hazard(c: Canvas, hz: Hazard, cx: Float, bottom: Float, u: Float, side: Boolean, clock: Float) {
-        val r = hz.kind.radius * u
+        val r = hz.radius * u
         when (hz.kind) {
             Kind.BARREL -> drum(c, hz, cx, bottom, r, side)
-            Kind.ROCK -> rock(c, hz, cx, bottom - r * 0.9f, r)
+            Kind.ROCK, Kind.BOSS -> rock(c, hz, cx, bottom - r * 0.9f, r)
             Kind.PLANT -> bramble(c, hz, cx, bottom, u)
             Kind.ENERGY -> shieldCell(c, hz, cx, bottom, r, clock)
             Kind.UPGRADE -> ammoCrate(c, cx, bottom, r)
@@ -180,7 +180,7 @@ class Sprites {
         stroke.color = 0xFF221E1A.toInt()
         stroke.strokeWidth = max(1f, r * 0.05f)
         c.drawPath(path, stroke)
-        if (hz.hp < hz.kind.hp) {
+        if (hz.hp < hz.maxHp) {
             stroke.color = 0xFF14110E.toInt()
             stroke.strokeWidth = max(1f, r * 0.07f)
             c.drawLine(cx - r * 0.55f, cy - r * 0.45f, cx - r * 0.05f, cy + r * 0.05f, stroke)

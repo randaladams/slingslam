@@ -9,14 +9,16 @@ An Android game: lob boulders at the hazards rolling toward you before they smas
 - **Read the side view:** the strip at the top shows the battlefield side-on: you on the left, the hazard coming from the right, the arc of every shot, and an ✕ where it landed. Use it to correct your distance on the next throw.
 - **Reload:** after each throw the next boulder rolls off the pile on the right into the sling.
 - **Shield:** anything bad that reaches your sandbags drains it. Smashing hazards restores some, and it slowly recharges on its own. When it hits zero the game is over.
-- **Hazards** come one at a time and get faster every 6:
+- **Hazards** get faster every 6. They come one at a time, two at a time from level 7, and three at a time from level 12:
   - Oil drum: rolls straight at you
   - Boulder: slower, takes two hits (a cracked one slows down)
   - Thorn bramble: creeps and weaves side to side
+  - **Boss boulder** (every 10th level): slow, takes 5 hits, with a health bar overhead. Any boulder that lands short of it gets rolled up into it, making it bigger and adding a hit.
 - **Bonuses** (hit them to collect):
   - Power cell case: +30 shield
-  - Ammo crate: sling upgrade (faster reload, bigger impact)
+  - Ammo crate: sling upgrade (faster reload, bigger impact). At sling level 5, boulders keep rolling after impact and can smash more than one hazard.
   - Gold bars: +500 points
+- **Points** float up over what you smashed, then fly to the scoreboard and tick in when they arrive.
 - **Streaks:** every 5 smashes in a row raises your points multiplier. Letting something through resets it.
 - The bottom strip of the screen is kept clear for a banner ad.
 

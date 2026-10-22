@@ -28,6 +28,7 @@ class SoundFx(context: Context) {
         ids[Sfx.PICKUP] = pool.load(context, R.raw.sfx_pickup, 1)
         ids[Sfx.UPGRADE] = pool.load(context, R.raw.sfx_upgrade, 1)
         ids[Sfx.GAMEOVER] = pool.load(context, R.raw.sfx_gameover, 1)
+        ids[Sfx.SCORE] = pool.load(context, R.raw.sfx_score, 1)
     }
 
     fun play(s: Sfx) {
@@ -36,6 +37,7 @@ class SoundFx(context: Context) {
         val vol = MASTER * when (s) {
             Sfx.LAND -> 0.6f
             Sfx.THROW -> 0.7f
+            Sfx.SCORE -> 0.45f
             else -> 1f
         }
         pool.play(id, vol, vol, 1, 0, 1f)
