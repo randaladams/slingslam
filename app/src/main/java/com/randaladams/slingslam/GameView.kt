@@ -40,7 +40,7 @@ import kotlin.math.sin
 @SuppressLint("ViewConstructor")
 class GameView(context: Context, private val onExit: () -> Unit = {}) : View(context), WorldListener {
 
-    private enum class Mode { TITLE, PLAYING, PAUSED, OVER, SCORES }
+    private enum class Mode { TITLE, PLAYING, PAUSED, OVER, SCORES, AD }
 
     private var mode = Mode.TITLE
     private var world = World(this)
@@ -76,7 +76,15 @@ class GameView(context: Context, private val onExit: () -> Unit = {}) : View(con
     private var sideScaleY = 1f
     private var horizonY = 0f
     private var groundY = 0f
-    private var adTop = 0f
+    private var adTop = 0f               // bottom of the battlefield (the whole screen height now)
+    private var adH = 0f                 // reserved banner strip at the very top
+    private val btnD = RectF()           // game over: watch ad to continue
+
+    // ---- ads (placeholders until AdMob is wired in; see showAd) ----
+    private var runsStarted = 0
+    private var adT = 0f
+    private var adRewarded = false
+    private var adThen: (() -> Unit)? = null
     private var unitPx = 1f
     private var slingX = 0f
     private var slingY = 0f
@@ -230,8 +238,9 @@ class GameView(context: Context, private val onExit: () -> Unit = {}) : View(con
     private fun layoutFor(pw: Int, ph: Int) {
         w = pw.toFloat()
         h = ph.toFloat()
-        hudTop = topInset
-        hudH = h * 0.072f
+        adH = h * AD_FRACTION
+        hudTop = topInset + adH + h * 0.006f
+        hudH = h * 0.065f
         sideTop = hudTop + hudH
         sideBottom = sideTop + h * 0.125f
         sideGround = sideBottom - (sideBottom - sideTop) * 0.16f
@@ -239,12 +248,12 @@ class GameView(context: Context, private val onExit: () -> Unit = {}) : View(con
         sidePadR = w * 0.04f
         sideScaleY = (sideGround - sideTop - h * 0.02f) / 34f
 
-        adTop = h * (1f - AD_FRACTION)
+        adTop = h
         horizonY = sideBottom + h * 0.045f
 
         slingR = min(w * 0.15f, h * 0.07f)
         slingX = w / 2f
-        slingY = h * 0.775f
+        slingY = h * 0.80f
         groundY = slingY - slingR * 1.3f
         maxPull = min(slingR * 2.1f, h - slingY - h * 0.01f)
         deadPull = slingR * 0.1f
@@ -257,8 +266,10 @@ class GameView(context: Context, private val onExit: () -> Unit = {}) : View(con
         unitPx = (w * 0.47f) / K.LANE_HALF
 
         val b = hudH * 0.62f
-        pauseBtn.set(w - b - w * 0.03f, hudTop + hudH * 0.06f, w - w * 0.03f, hudTop + hudH * 0.06f + b)
-        soundBtn.set(pauseBtn.left - b - w * 0.025f, pauseBtn.top, pauseBtn.left - w * 0.025f, pauseBtn.bottom)
+        // pause and sound sit in the bottom-right corner, near your thumb and far from the banner
+        val cb = w * 0.12f
+        pauseBtn.set(w - cb - w * 0.03f, h - cb - h * 0.025f, w - w * 0.03f, h - h * 0.025f)
+        soundBtn.set(pauseBtn.left - cb - w * 0.03f, pauseBtn.top, pauseBtn.left - w * 0.03f, pauseBtn.bottom)
         val lb = hudH * 0.42f
         val lcy = hudTop + hudH * 0.32f
         levelDown.set(w * 0.5f - w * 0.17f - lb, lcy - lb / 2f, w * 0.5f - w * 0.17f, lcy + lb / 2f)
@@ -307,6 +318,7 @@ class GameView(context: Context, private val onExit: () -> Unit = {}) : View(con
                 world.update(dt)   // lets the last debris settle
                 overT += dt
             }
+            Mode.AD -> adT += dt
             else -> {}
         }
 
@@ -323,7 +335,11 @@ class GameView(context: Context, private val onExit: () -> Unit = {}) : View(con
                 val i = e.actionIndex
                 val x = e.getX(i)
                 val y = e.getY(i)
-                if (inflate(soundBtn).contains(x, y)) {
+                if (mode == Mode.AD) {
+                    if (e.actionMasked == MotionEvent.ACTION_DOWN && adT >= AD_SECONDS) finishAd()
+                    return true
+                }
+                if ((mode == Mode.PLAYING || mode == Mode.TITLE || mode == Mode.PAUSED) && inflate(soundBtn).contains(x, y)) {
                     sfx.enabled = !sfx.enabled
                     prefs.edit().putBoolean("sound", sfx.enabled).apply()
                     return true
@@ -336,16 +352,18 @@ class GameView(context: Context, private val onExit: () -> Unit = {}) : View(con
                             btnA.contains(x, y) -> startTutorial()
                             btnC.contains(x, y) -> { scoresFrom = Mode.TITLE; mode = Mode.SCORES }
                             !prefs.getBoolean("tutorialDone", false) -> startTutorial()
-                            else -> startGame()
+                            else -> requestStart()
                         }
                     }
                     Mode.OVER -> if (overT > 0.9f && e.actionMasked == MotionEvent.ACTION_DOWN) {
                         layoutMenu(Mode.OVER)
-                        if (btnA.contains(x, y)) startGame()
+                        if (canContinue() && btnD.contains(x, y)) showAd(true) { continueRun() }
+                        else if (btnA.contains(x, y)) requestStart()
                         else if (btnC.contains(x, y)) { scoresFrom = Mode.OVER; mode = Mode.SCORES }
                         else if (btnB.contains(x, y)) mode = Mode.TITLE
                     }
                     Mode.SCORES -> if (e.actionMasked == MotionEvent.ACTION_DOWN) mode = scoresFrom
+                    Mode.AD -> {}
                     Mode.PAUSED -> if (e.actionMasked == MotionEvent.ACTION_DOWN) {
                         layoutMenu(Mode.PAUSED)
                         if (btnA.contains(x, y)) {
@@ -460,7 +478,7 @@ class GameView(context: Context, private val onExit: () -> Unit = {}) : View(con
         drawSideView(c)
         c.restore()
 
-        drawAdStrip(c)
+        drawCornerButtons(c)
         drawHud(c)
         drawFlyingPoints(c)
 
@@ -476,14 +494,151 @@ class GameView(context: Context, private val onExit: () -> Unit = {}) : View(con
             Mode.PLAYING -> if (tutStep >= 0) drawTutorial(c)
             Mode.PAUSED -> drawPaused(c)
             Mode.OVER -> drawGameOver(c)
-            else -> {}
+            Mode.AD -> drawAdScreen(c)
         }
+        drawAdStrip(c)
     }
 
+    /** Reserved space for the banner ad at the top. A real AdView will sit over this strip. */
     private fun drawAdStrip(c: Canvas) {
         paint.shader = null
         paint.color = 0xFF0C0D0E.toInt()
-        c.drawRect(0f, adTop, w, h, paint)
+        c.drawRect(0f, 0f, w, topInset + adH, paint)
+        stroke.pathEffect = null
+        stroke.color = 0x22E6DCC2
+        stroke.strokeWidth = 2f
+        rect.set(w * 0.02f, topInset + adH * 0.08f, w * 0.98f, topInset + adH * 0.92f)
+        c.drawRoundRect(rect, adH * 0.1f, adH * 0.1f, stroke)
+        text.textAlign = Paint.Align.CENTER
+        text.textSize = adH * 0.28f
+        text.color = 0x44E6DCC2
+        c.drawText("BANNER AD SPACE", w / 2f, topInset + adH * 0.6f, text)
+    }
+
+    // ---------------------------------------------------------------- ads (placeholders)
+
+    /** Every third run starts with an interstitial ad. */
+    private fun requestStart() {
+        runsStarted++
+        if (runsStarted % INTERSTITIAL_EVERY == 0) showAd(false) { startGame() } else startGame()
+    }
+
+    private fun canContinue() = !world.continued && !world.tutorial
+
+    /**
+     * Shows an ad, then runs [then]. For now this is a placeholder screen; when AdMob is added,
+     * load and show an InterstitialAd (rewarded = false) or RewardedAd (rewarded = true) here and
+     * call [then] from its dismiss / reward callback.
+     */
+    private fun showAd(rewarded: Boolean, then: () -> Unit) {
+        adRewarded = rewarded
+        adThen = then
+        adT = 0f
+        aiming = false
+        mode = Mode.AD
+    }
+
+    private fun finishAd() {
+        val then = adThen
+        adThen = null
+        lastNs = 0L
+        then?.invoke()
+    }
+
+    /** Rewarded continue after the shield goes down: half shield, field cleared, once per run. */
+    private fun continueRun() {
+        world.continued = true
+        world.gameOver = false
+        world.shield = K.SHIELD_MAX * 0.5f
+        world.hazards.clear()
+        world.spawnTimer = 1.5f
+        world.banner = "SHIELD RESTORED — KEEP GOING!"
+        world.bannerT = 1.8f
+        // the run isn't over after all: take back the score that was just recorded
+        val rest = loadScores().drop(1)
+        prefs.edit().putString("scores", rest.joinToString(",") { "${it.first}:${it.second}" }).apply()
+        mode = Mode.PLAYING
+        aiming = false
+        lastNs = 0L
+    }
+
+    private fun drawAdScreen(c: Canvas) {
+        paint.shader = null
+        paint.color = 0xF00A0B0C.toInt()
+        c.drawRect(0f, 0f, w, h, paint)
+        rect.set(w * 0.08f, h * 0.3f, w * 0.92f, h * 0.62f)
+        paint.color = 0xFF1E2124.toInt()
+        c.drawRoundRect(rect, w * 0.03f, w * 0.03f, paint)
+        stroke.pathEffect = null
+        stroke.color = 0x55E6DCC2
+        stroke.strokeWidth = w * 0.004f
+        c.drawRoundRect(rect, w * 0.03f, w * 0.03f, stroke)
+        text.textAlign = Paint.Align.CENTER
+        text.textSize = w * 0.06f
+        text.color = khaki
+        c.drawText(if (adRewarded) "REWARDED AD" else "ADVERTISEMENT", w / 2f, h * 0.4f, text)
+        text.textSize = w * 0.036f
+        text.color = Color.argb(160, 230, 220, 194)
+        c.drawText("(placeholder — the real ad will show here)", w / 2f, h * 0.45f, text)
+        val left = AD_SECONDS - adT
+        text.textSize = w * 0.05f
+        if (left > 0f) {
+            text.color = khaki
+            c.drawText("${kotlin.math.ceil(left).toInt()}", w / 2f, h * 0.54f, text)
+        } else {
+            text.color = Color.argb((170 + 85 * sin(clock * 4f)).toInt(), 242, 180, 81)
+            c.drawText(if (adRewarded) "Reward earned — tap to continue" else "Tap to continue", w / 2f, h * 0.54f, text)
+        }
+    }
+
+    private fun drawPauseSoundIcons(c: Canvas) {
+        paint.shader = null
+        // pause
+        paint.color = khaki
+        val bw = pauseBtn.width() * 0.12f
+        val bh = pauseBtn.height() * 0.22f
+        c.drawRect(pauseBtn.centerX() - bw * 2f, pauseBtn.centerY() - bh, pauseBtn.centerX() - bw * 0.7f, pauseBtn.centerY() + bh, paint)
+        c.drawRect(pauseBtn.centerX() + bw * 0.7f, pauseBtn.centerY() - bh, pauseBtn.centerX() + bw * 2f, pauseBtn.centerY() + bh, paint)
+
+        // sound
+        val cx = soundBtn.centerX()
+        val cy = soundBtn.centerY()
+        val u = soundBtn.width() * 0.11f
+        paint.color = khaki
+        path.reset()
+        path.moveTo(cx - u * 2.6f, cy - u)
+        path.lineTo(cx - u * 1.2f, cy - u)
+        path.lineTo(cx + u * 0.4f, cy - u * 2.4f)
+        path.lineTo(cx + u * 0.4f, cy + u * 2.4f)
+        path.lineTo(cx - u * 1.2f, cy + u)
+        path.lineTo(cx - u * 2.6f, cy + u)
+        path.close()
+        c.drawPath(path, paint)
+        stroke.pathEffect = null
+        stroke.color = khaki
+        stroke.strokeWidth = u * 0.5f
+        if (sfx.enabled) {
+            rect.set(cx - u * 1.2f, cy - u * 2.2f, cx + u * 2.6f, cy + u * 2.2f)
+            c.drawArc(rect, -45f, 90f, false, stroke)
+        } else {
+            c.drawLine(cx + u * 1.2f, cy - u, cx + u * 2.8f, cy + u, stroke)
+            c.drawLine(cx + u * 1.2f, cy + u, cx + u * 2.8f, cy - u, stroke)
+        }
+
+    }
+
+    /** Pause and sound buttons in the bottom-right corner. */
+    private fun drawCornerButtons(c: Canvas) {
+        paint.shader = null
+        paint.color = 0x55141618
+        c.drawCircle(pauseBtn.centerX(), pauseBtn.centerY(), pauseBtn.width() / 2f, paint)
+        c.drawCircle(soundBtn.centerX(), soundBtn.centerY(), soundBtn.width() / 2f, paint)
+        stroke.pathEffect = null
+        stroke.color = 0x66E6DCC2
+        stroke.strokeWidth = pauseBtn.width() * 0.04f
+        c.drawCircle(pauseBtn.centerX(), pauseBtn.centerY(), pauseBtn.width() / 2f, stroke)
+        c.drawCircle(soundBtn.centerX(), soundBtn.centerY(), soundBtn.width() / 2f, stroke)
+        drawPauseSoundIcons(c)
     }
 
     // ---------------------------------------------------------------- lane view
@@ -1073,42 +1228,6 @@ class GameView(context: Context, private val onExit: () -> Unit = {}) : View(con
             }
         }
 
-        // pause
-        paint.color = 0x33E6DCC2
-        c.drawCircle(pauseBtn.centerX(), pauseBtn.centerY(), pauseBtn.width() / 2f, paint)
-        paint.color = khaki
-        val bw = pauseBtn.width() * 0.12f
-        val bh = pauseBtn.height() * 0.22f
-        c.drawRect(pauseBtn.centerX() - bw * 2f, pauseBtn.centerY() - bh, pauseBtn.centerX() - bw * 0.7f, pauseBtn.centerY() + bh, paint)
-        c.drawRect(pauseBtn.centerX() + bw * 0.7f, pauseBtn.centerY() - bh, pauseBtn.centerX() + bw * 2f, pauseBtn.centerY() + bh, paint)
-
-        // sound
-        paint.color = 0x33E6DCC2
-        c.drawCircle(soundBtn.centerX(), soundBtn.centerY(), soundBtn.width() / 2f, paint)
-        val cx = soundBtn.centerX()
-        val cy = soundBtn.centerY()
-        val u = soundBtn.width() * 0.11f
-        paint.color = khaki
-        path.reset()
-        path.moveTo(cx - u * 2.6f, cy - u)
-        path.lineTo(cx - u * 1.2f, cy - u)
-        path.lineTo(cx + u * 0.4f, cy - u * 2.4f)
-        path.lineTo(cx + u * 0.4f, cy + u * 2.4f)
-        path.lineTo(cx - u * 1.2f, cy + u)
-        path.lineTo(cx - u * 2.6f, cy + u)
-        path.close()
-        c.drawPath(path, paint)
-        stroke.pathEffect = null
-        stroke.color = khaki
-        stroke.strokeWidth = u * 0.5f
-        if (sfx.enabled) {
-            rect.set(cx - u * 1.2f, cy - u * 2.2f, cx + u * 2.6f, cy + u * 2.2f)
-            c.drawArc(rect, -45f, 90f, false, stroke)
-        } else {
-            c.drawLine(cx + u * 1.2f, cy - u, cx + u * 2.8f, cy + u, stroke)
-            c.drawLine(cx + u * 1.2f, cy + u, cx + u * 2.8f, cy - u, stroke)
-        }
-
         // shield bar
         val sf = world.shield / K.SHIELD_MAX
         val bx0 = w * 0.04f
@@ -1515,9 +1634,17 @@ class GameView(context: Context, private val onExit: () -> Unit = {}) : View(con
                 btnB.set(w / 2f - bw / 2f, h * 0.55f, w / 2f + bw / 2f, h * 0.55f + bh)
             }
             else -> {
-                btnA.set(w / 2f - bw / 2f, h * 0.67f, w / 2f + bw / 2f, h * 0.67f + bh)
-                btnC.set(w / 2f - bw / 2f, h * 0.75f, w / 2f + bw / 2f, h * 0.75f + bh)
-                btnB.set(w / 2f - bw / 2f, h * 0.83f, w / 2f + bw / 2f, h * 0.83f + bh)
+                val cw = w * 0.72f
+                val y0 = if (canContinue()) h * 0.665f else h * 0.67f
+                val step = h * 0.076f
+                var y = y0
+                if (canContinue()) {
+                    btnD.set(w / 2f - cw / 2f, y, w / 2f + cw / 2f, y + bh)
+                    y += step
+                } else btnD.set(0f, 0f, 0f, 0f)
+                btnA.set(w / 2f - bw / 2f, y, w / 2f + bw / 2f, y + bh)
+                btnC.set(w / 2f - bw / 2f, y + step, w / 2f + bw / 2f, y + step + bh)
+                btnB.set(w / 2f - bw / 2f, y + step * 2, w / 2f + bw / 2f, y + step * 2 + bh)
             }
         }
     }
@@ -1562,14 +1689,17 @@ class GameView(context: Context, private val onExit: () -> Unit = {}) : View(con
         c.drawText("Accuracy $acc%   •   Best streak ${world.bestStreak}", w / 2f, h * 0.62f, text)
         if (overT > 0.9f) {
             layoutMenu(Mode.OVER)
-            drawButton(c, btnA, "PLAY AGAIN", true)
+            if (canContinue()) drawButton(c, btnD, "▶ WATCH AD TO CONTINUE", true)
+            drawButton(c, btnA, "PLAY AGAIN", !canContinue())
             drawButton(c, btnC, "SCOREBOARD", false)
             drawButton(c, btnB, "MENU", false)
         }
     }
 
     companion object {
-        /** Bottom share of the screen kept free for a banner ad (a 50dp banner fits on typical phones). */
-        const val AD_FRACTION = 0.075f
+        /** Top share of the screen reserved for a banner ad (fits a standard 50dp banner on typical phones). */
+        const val AD_FRACTION = 0.06f
+        const val INTERSTITIAL_EVERY = 3
+        const val AD_SECONDS = 3f
     }
 }

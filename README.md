@@ -24,9 +24,10 @@ An Android game: lob boulders at the hazards rolling toward you before they smas
 - **Streaks:** every 5 smashes in a row raises your points multiplier. Letting something through resets it.
 - **Tutorial:** an interactive practice run plays the first time you start, and any time from **How to play** on the title screen.
 - **Scoreboard:** keeps your last 20 runs with your high score featured at the top. Open it from the title screen or after a game.
-- **Menus:** the pause menu has Resume and End game, game over has Play again, Scoreboard and Menu, and the title screen has How to play, Scores and Exit.
+- **Controls:** pause and sound are in the bottom-right corner, next to your thumb.
+- **Menus:** the pause menu has Resume and End game, game over has Watch ad to continue (once per run), Play again, Scoreboard and Menu, and the title screen has How to play, Scores and Exit.
 - **Testing:** the − / + buttons beside the level number jump levels. Remove them before release.
-- The bottom strip of the screen is kept clear for a banner ad.
+- **Ads (placeholders for now):** a banner strip is reserved at the very top, away from the controls. An interstitial plays before every 3rd run, and after the shield goes down you can watch a rewarded ad to continue with half shield (once per run). All ad calls go through `showAd()` in `GameView.kt`, ready for AdMob.
 
 ## Install on your phone
 

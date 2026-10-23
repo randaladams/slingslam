@@ -182,7 +182,8 @@ class World(private val listener: WorldListener, seed: Long = System.nanoTime())
 
     var shake = 0f
     var hurtFlash = 0f
-    var tutorial = false              // practice mode: no auto spawns, no damage, no levels
+    var tutorial = false
+    var continued = false             // used the watch-an-ad continue this run              // practice mode: no auto spawns, no damage, no levels
     var splitCharges = 0
     var splitArmed = false
     private val pending = ArrayList<Boulder>()
