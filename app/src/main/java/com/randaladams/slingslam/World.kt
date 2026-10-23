@@ -151,6 +151,7 @@ class World(private val listener: WorldListener, seed: Long = System.nanoTime())
         /** Rolling resistance after a billiard knock: low, so a hard hit rolls a long way. */
         const val BILLIARD_FRICTION = 0.55f
         const val LEVEL_REST = 3f        // seconds of calm between levels
+        const val BOSS_DELAY = 2.5f      // pause after the final wave before the boss appears
         const val SPLIT_SPREAD = 9f      // sideways speed of the outer split rocks
         const val CHAIN_LEN = 3.6f       // how far apart the chained rocks can get
     }
@@ -171,7 +172,8 @@ class World(private val listener: WorldListener, seed: Long = System.nanoTime())
 
     val hazards = ArrayList<Hazard>()
     var spawnTimer = 1.6f
-    private var bossLevel = 0         // level whose boss has already appeared
+    var wave = 0                      // regular waves sent so far in this level
+    var bossSpawned = false           // this level's boss has appeared
     val boulders = ArrayList<Boulder>()
     val particles = ArrayList<Particle>()
     val popups = ArrayList<Popup>()
@@ -196,14 +198,15 @@ class World(private val listener: WorldListener, seed: Long = System.nanoTime())
 
     val reloadDuration get() = 0.95f - 0.11f * (slingLevel - 1)
     val splash get() = 0.5f + 0.3f * (slingLevel - 1)     // extra hit radius when a boulder lands
-    val hazardSpeed get() = min(5.5f * (1f + 0.10f * (level - 1)), 30f)
+    val hazardSpeed get() = min(5.5f * (1f + 0.18f * (level - 1) + 0.025f * wave), 30f)
     val spawnDelay get() = max(0.4f, 1.8f - 0.1f * (level - 1))
     val multiplier get() = 1 + streak / 5
-    val waveSize get() = when {
-        level >= 10 -> 3
-        level >= 5 -> 2
-        else -> 1
-    }
+    /** Level 1 has 5 waves, each level adds one, up to 8; then the boss. */
+    val wavesInLevel get() = min(4 + level, 8)
+    val waveLabel get() = if (bossSpawned) "BOSS" else "WAVE ${max(1, wave)}/$wavesInLevel"
+
+    /** Hazards per wave grow through a level and from level to level, up to 4. */
+    fun waveSizeFor(lv: Int, w: Int) = min(4, 1 + (lv - 1 + w) / 3)
     val boss: Hazard? get() = hazards.firstOrNull { it.kind == Kind.BOSS }
 
     /** Where a throw of this power would land (ignoring launch height). */
@@ -311,16 +314,17 @@ class World(private val listener: WorldListener, seed: Long = System.nanoTime())
         updateBoulders(dt)
     }
 
-    /** Every 10th level opens with a boss; otherwise 1, 2 or 3 hazards come together. */
+    /** Sends the next wave of the level, or the boss once all the waves are done. */
     private fun spawnWave() {
         levelRest = false
-        if (level % 10 == 0 && bossLevel != level) {
-            bossLevel = level
+        if (bossSpawned) return
+        if (wave >= wavesInLevel) {
+            bossSpawned = true
             val shape = FloatArray(9) { 0.82f + rnd.nextFloat() * 0.22f }
             val x = (rnd.nextFloat() * 2f - 1f) * 3f
             val boss = Hazard(Kind.BOSS, x, K.Z_FAR + 6f, hazardSpeed * 0.45f, shape)
             // each boss is a little tougher than the last
-            boss.hp = kotlin.math.ceil((Kind.BOSS.hp + (level / 10 - 1)) * 1.25f).toInt()
+            boss.hp = kotlin.math.ceil((Kind.BOSS.hp + (level - 1)) * 1.25f).toInt()
             boss.maxHp = boss.hp
             hazards.add(boss)
             // every stone left on the field gets sucked into it, one after another
@@ -335,7 +339,9 @@ class World(private val listener: WorldListener, seed: Long = System.nanoTime())
             if (k > 0) shake = 0.6f
             return
         }
-        val n = waveSize
+        val n = waveSizeFor(level, wave)
+        wave++
+        if (wave == wavesInLevel) showBanner("FINAL WAVE — BOSS NEXT! KEEP THE FIELD CLEAR")
         val band = (2f * (K.LANE_HALF - 2.5f)) / n
         for (i in 0 until n) {
             val x = -K.LANE_HALF + 2.5f + band * (i + 0.15f + rnd.nextFloat() * 0.7f)
@@ -354,8 +360,8 @@ class World(private val listener: WorldListener, seed: Long = System.nanoTime())
             }
         } else {
             val wBarrel = 1f
-            val wRock = if (level >= 2) 0.6f else 0f
-            val wPlant = if (level >= 3) 0.6f else 0f
+            val wRock = if (level >= 2 || wave >= 3) 0.6f else 0f
+            val wPlant = if (level >= 2) 0.6f else 0f
             val r = rnd.nextFloat() * (wBarrel + wRock + wPlant)
             kind = when {
                 r < wBarrel -> Kind.BARREL
@@ -436,17 +442,47 @@ class World(private val listener: WorldListener, seed: Long = System.nanoTime())
 
     /** Testing aid: jump straight to a level. */
     fun debugSetLevel(n: Int) {
-        val old = level
         level = n.coerceIn(1, 99)
-        for (lv in old + 1..level) if (lv % 5 == 0) grantSplit()
-        resolved = (level - 1) * K.HAZARDS_PER_LEVEL
-        bossLevel = 0
+        wave = 0
+        bossSpawned = false
         hazards.clear()
         spawnTimer = 0.6f
         showBanner("LEVEL $level")
     }
 
-    /** One split shot every 5 levels, holding at most 3. */
+    /** Testing aid: + jumps to this level's boss (or the next level if the boss is out); - goes back a level. */
+    fun debugJump(up: Boolean) {
+        if (!up) {
+            debugSetLevel(level - 1)
+            return
+        }
+        if (!bossSpawned) {
+            hazards.clear()
+            wave = wavesInLevel
+            spawnTimer = 0.6f
+            showBanner("LEVEL $level — BOSS")
+        } else debugSetLevel(level + 1)
+    }
+
+    /** The boss is gone (beaten, or it got through): on to the next level after a breather. */
+    private fun levelComplete(beaten: Boolean) {
+        val done = level
+        level++
+        wave = 0
+        bossSpawned = false
+        levelRest = true
+        spawnTimer = LEVEL_REST
+        if (beaten) {
+            val bonus = 500 * done
+            score += bonus
+            popups.add(Popup("+$bonus", 0f, 30f, 0xFFF2B451.toInt(), big = true, value = bonus))
+            grantSplit()
+        }
+        showBanner(if (beaten) "LEVEL $done COMPLETE!" else "LEVEL $level")
+        bannerT = LEVEL_REST
+    }
+
+    /** One split shot for each boss beaten, holding at most 3. */
     private fun grantSplit() {
         if (splitCharges < 3) {
             splitCharges++
@@ -491,23 +527,20 @@ class World(private val listener: WorldListener, seed: Long = System.nanoTime())
             gameOver = true
             listener.onSound(Sfx.GAMEOVER)
             listener.onVibrate(400, 255)
+        } else if (h.kind == Kind.BOSS) {
+            levelComplete(false)
         }
     }
 
     private fun resolveOne() {
         if (tutorial) return
         resolved++
-        val newLevel = 1 + resolved / K.HAZARDS_PER_LEVEL
-        if (newLevel > level) {
-            level = newLevel
-            showBanner(if (level % 10 == 9) "LEVEL $level — BOSS NEXT! KEEP THE FIELD CLEAR" else "LEVEL $level")
-            bannerT = LEVEL_REST
-            if (level % 5 == 0) grantSplit()
-            levelRest = true
+        // the normal gap between waves; a longer pause before the boss walks in
+        spawnTimer = when {
+            levelRest -> LEVEL_REST
+            wave >= wavesInLevel && !bossSpawned -> BOSS_DELAY
+            else -> spawnDelay
         }
-        // a short breather after each new level, otherwise the normal gap
-        spawnTimer = if (levelRest) LEVEL_REST else spawnDelay
-        if (level % 10 == 0 && bossLevel != level) showBanner("LEVEL $level — BOSS INCOMING")
     }
 
     private fun showBanner(s: String) {
@@ -867,7 +900,7 @@ class World(private val listener: WorldListener, seed: Long = System.nanoTime())
             score += pts
             shield = min(K.SHIELD_MAX, shield + if (h.kind == Kind.BOSS) 25f else K.SHIELD_PER_KILL)
             shake = max(shake, if (h.kind == Kind.BOSS) 1f else 0.45f)
-            if (h.kind == Kind.BOSS) showBanner("BOSS DESTROYED!")
+            if (h.kind == Kind.BOSS) levelComplete(true)
             listener.onSound(Sfx.BREAK)
             listener.onVibrate(45, 200)
             val color = when (h.kind) {

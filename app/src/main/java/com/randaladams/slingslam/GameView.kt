@@ -382,9 +382,9 @@ class GameView(context: Context, private val onExit: () -> Unit = {}) : View(con
                         } else if (tutStep >= 0 && tutIsTapStep() && !inflate(pauseBtn).contains(x, y)) {
                             if (e.actionMasked == MotionEvent.ACTION_DOWN) advanceTutorial()
                         } else if (tutStep < 0 && inflate(levelDown).contains(x, y) && y < sideTop) {
-                            world.debugSetLevel(world.level - 1)
+                            world.debugJump(false)
                         } else if (tutStep < 0 && inflate(levelUp).contains(x, y) && y < sideTop) {
-                            world.debugSetLevel(world.level + 1)
+                            world.debugJump(true)
                         } else if (inflate(pauseBtn).contains(x, y)) {
                             mode = Mode.PAUSED
                             aiming = false
@@ -392,7 +392,7 @@ class GameView(context: Context, private val onExit: () -> Unit = {}) : View(con
                             if (world.toggleSplit()) {
                                 sfx.play(Sfx.PICKUP)
                             } else {
-                                world.popups.add(Popup("no split shots — earn one every 5 levels", 0f, 6f, khaki))
+                                world.popups.add(Popup("no split shots — beat a boss to earn one", 0f, 6f, khaki))
                             }
                         } else if (!aiming && hypot(x - slingX, y - slingY) < slingR * 1.8f) {
                             aiming = true
@@ -1244,7 +1244,9 @@ class GameView(context: Context, private val onExit: () -> Unit = {}) : View(con
         text.textAlign = Paint.Align.CENTER
         text.textSize = hudH * 0.3f
         text.color = amber
-        c.drawText("LEVEL ${world.level}", w * 0.5f, rowY, text)
+        val lvText = if (tutStep >= 0) "LEVEL ${world.level}" else "LEVEL ${world.level} · ${world.waveLabel}"
+        text.textSize = hudH * 0.27f
+        c.drawText(lvText, w * 0.5f, rowY, text)
         // TESTING: level -/+ buttons (remove before release)
         if (mode == Mode.PLAYING && tutStep < 0) {
             for ((r, label) in listOf(levelDown to "−", levelUp to "+")) {
@@ -1531,8 +1533,8 @@ class GameView(context: Context, private val onExit: () -> Unit = {}) : View(con
         3 -> "Close ones need a short, gentle pull. Short throws fly low and fast."
         4 -> "To aim RIGHT, pull down and to the LEFT. To aim left, pull to the right."
         5 -> "Tap the SPLIT button, then throw. Your boulder becomes 3 chained rocks that spread out as they fly, hitting a wider area."
-        6 -> "You earn a split shot every 5 levels (hold up to 3). Hit power cells for shield, ammo crates to upgrade your sling, and gold for points. Tap to continue."
-        else -> "Every 10th level a BOSS golem appears. Any stones left on the field get sucked into it and make it tougher, so keep your misses down! Tap to start."
+        6 -> "Each level is a series of waves. Hit power cells for shield, ammo crates to upgrade your sling, and gold for points. Tap to continue."
+        else -> "Every level ends with a BOSS golem. Stones left on the field get sucked into it and make it tougher, so keep your misses down. Beat it to earn a split shot! Tap to start."
     }
 
     private fun tutorialTick(dt: Float) {
