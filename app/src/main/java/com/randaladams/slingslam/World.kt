@@ -183,7 +183,8 @@ class World(private val listener: WorldListener, seed: Long = System.nanoTime())
     var shake = 0f
     var hurtFlash = 0f
     var tutorial = false
-    var continued = false             // used the watch-an-ad continue this run              // practice mode: no auto spawns, no damage, no levels
+    var continued = false
+    var quit = false                  // ended from the pause menu (no continue offer)             // used the watch-an-ad continue this run              // practice mode: no auto spawns, no damage, no levels
     var splitCharges = 0
     var splitArmed = false
     private val pending = ArrayList<Boulder>()
@@ -689,6 +690,28 @@ class World(private val listener: WorldListener, seed: Long = System.nanoTime())
                             strike(h)
                         }
                     }
+                }
+                // A hazard that runs into a stone on the ground sets it off, destroying the hazard.
+                // (The boss is the exception: it soaks stones up instead.)
+                if (!b.pulled && !b.gone) {
+                    for (i in hazards.indices.reversed()) {
+                        if (i >= hazards.size) continue
+                        val h = hazards[i]
+                        if (h.kind == Kind.BOSS || b.struck.contains(h)) continue
+                        if (hypot(b.x - h.x, b.z - h.z) < hitR(h) + b.r) {
+                            b.gone = true
+                            b.struck.add(h)
+                            fire(b.x, 1f, b.z, 16)
+                            smoke(b.x, 1f, b.z, 8, 0xFF3A3632.toInt(), 2.2f)
+                            burst(b.x, 1f, b.z, 0xFF77706A.toInt(), 14, 16f)
+                            marks.add(Mark(b.x, b.z, true))
+                            popups.add(Popup("BOOM!", h.x, h.z, 0xFFFFA726.toInt(), big = true))
+                            h.hp = 1
+                            strike(h)
+                            break
+                        }
+                    }
+                    if (b.gone) { it.remove(); continue }
                 }
                 // Only misses stay on the field; boulders that hit something fade once they stop.
                 val life = b.groundLife

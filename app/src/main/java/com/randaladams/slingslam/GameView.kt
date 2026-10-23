@@ -272,8 +272,9 @@ class GameView(context: Context, private val onExit: () -> Unit = {}) : View(con
         soundBtn.set(pauseBtn.left - cb - w * 0.03f, pauseBtn.top, pauseBtn.left - w * 0.03f, pauseBtn.bottom)
         val lb = hudH * 0.42f
         val lcy = hudTop + hudH * 0.32f
-        levelDown.set(w * 0.5f - w * 0.17f - lb, lcy - lb / 2f, w * 0.5f - w * 0.17f, lcy + lb / 2f)
-        levelUp.set(w * 0.5f + w * 0.17f, lcy - lb / 2f, w * 0.5f + w * 0.17f + lb, lcy + lb / 2f)
+        // right-hand side of the score row, clear of the score
+        levelDown.set(w * 0.80f, lcy - lb / 2f, w * 0.80f + lb, lcy + lb / 2f)
+        levelUp.set(w * 0.96f - lb, lcy - lb / 2f, w * 0.96f, lcy + lb / 2f)
 
         val d = w * 0.012f
         dash = DashPathEffect(floatArrayOf(d * 1.6f, d), 0f)
@@ -371,6 +372,7 @@ class GameView(context: Context, private val onExit: () -> Unit = {}) : View(con
                             lastNs = 0L
                         } else if (btnB.contains(x, y)) {
                             world.gameOver = true
+                            world.quit = true
                             endGame()
                         }
                     }
@@ -523,7 +525,7 @@ class GameView(context: Context, private val onExit: () -> Unit = {}) : View(con
         if (runsStarted % INTERSTITIAL_EVERY == 0) showAd(false) { startGame() } else startGame()
     }
 
-    private fun canContinue() = !world.continued && !world.tutorial
+    private fun canContinue() = !world.continued && !world.tutorial && !world.quit
 
     /**
      * Shows an ad, then runs [then]. For now this is a placeholder screen; when AdMob is added,
@@ -1670,7 +1672,7 @@ class GameView(context: Context, private val onExit: () -> Unit = {}) : View(con
         text.textAlign = Paint.Align.CENTER
         text.textSize = w * 0.11f
         text.color = 0xFFD2452F.toInt()
-        outlinedText(c, "SHIELD DOWN!", w / 2f, h * 0.33f)
+        outlinedText(c, if (world.quit) "GAME OVER" else "SHIELD DOWN!", w / 2f, h * 0.33f)
         text.textSize = w * 0.16f
         text.color = khaki
         outlinedText(c, "${world.score}", w / 2f, h * 0.45f)

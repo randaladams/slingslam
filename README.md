@@ -18,15 +18,15 @@ An Android game: lob boulders at the hazards rolling toward you before they smas
   - Power cell case: +30 shield
   - Ammo crate: sling upgrade (faster reload, bigger impact, longer roll). Boulders roll a little after landing at first and farther with each upgrade, and can smash hazards they roll into. At sling level 5 they also keep rolling after a direct hit.
   - Gold bars: +500 points
-- **On the field:** only missed boulders stay on the ground, and they fade after about 7 seconds. Boulders knock each other around like billiard balls: the harder a stone is hit, the faster and farther it rolls, and a knocked stone can roll into a hazard and smash it.
+- **On the field:** only missed boulders stay on the ground, and they fade after about 7 seconds. Boulders knock each other around like billiard balls: the harder a stone is hit, the faster and farther it rolls, and a knocked stone can roll into a hazard and smash it. A hazard that runs into a stone lying on the ground sets it off: the stone explodes and destroys the hazard (except the boss, which absorbs stones).
 - **Split shot:** tap the button left of the sling to arm the loaded boulder. The moment you throw it, it becomes 3 smaller rocks chained together that spread out sideways as they fly, covering a wider area. Each rock can smash a hazard. You earn one every 5 levels and can hold up to 3.
 - **Points** float up over what you smashed, then fly to the scoreboard and tick in when they arrive.
 - **Streaks:** every 5 smashes in a row raises your points multiplier. Letting something through resets it.
 - **Tutorial:** an interactive practice run plays the first time you start, and any time from **How to play** on the title screen.
 - **Scoreboard:** keeps your last 20 runs with your high score featured at the top. Open it from the title screen or after a game.
 - **Controls:** pause and sound are in the bottom-right corner, next to your thumb.
-- **Menus:** the pause menu has Resume and End game, game over has Watch ad to continue (once per run), Play again, Scoreboard and Menu, and the title screen has How to play, Scores and Exit.
-- **Testing:** the − / + buttons beside the level number jump levels. Remove them before release.
+- **Menus:** the pause menu has Resume and End game, game over has Watch ad to continue (once per run, and not when you end the game yourself), Play again, Scoreboard and Menu, and the title screen has How to play, Scores and Exit.
+- **Testing:** the − / + buttons at the right end of the score row jump levels. Remove them before release.
 - **Ads (placeholders for now):** a banner strip is reserved at the very top, away from the controls. An interstitial plays before every 3rd run, and after the shield goes down you can watch a rewarded ad to continue with half shield (once per run). All ad calls go through `showAd()` in `GameView.kt`, ready for AdMob.
 
 ## Install on your phone
