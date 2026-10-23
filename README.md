@@ -10,15 +10,15 @@ An Android game: lob boulders at the hazards rolling toward you before they smas
 - **Reload:** after each throw the next boulder rolls off the pile on the right into the sling.
 - **Shield:** anything bad that reaches your sandbags drains it. Smashing hazards restores some, and it slowly recharges on its own. When it hits zero the game is over.
 - **Hazards** get faster every 6. They come one at a time, two at a time from level 7, and three at a time from level 12:
-  - Oil drum: rolls straight at you
-  - Boulder: slower, takes two hits (a cracked one slows down)
-  - Thorn bramble: creeps and weaves side to side
-  - **Boss golem** (every 10th level): a slow, hunched giant built from jagged stone slabs, with a health bar overhead. It takes 3 hits at level 10 and 1 more with each later boss. When it arrives it stops, raises its arms, and every stray stone still on the field lifts off and swirls into it. During the fight, any shot that lands short of it gets sucked in too. Every 2 stones it absorbs add a hit, and each one makes it bigger. Shots that land past it are safe.
+  - Rolling boulder: round granite, rolls straight at you
+  - Jagged rock: slower, takes two hits (a cracked one slows down)
+  - Rock cluster: a loose clump of tumbling stones that weaves side to side
+  - **Boss golem** (every 10th level): a slow, hunched giant built from jagged stone slabs, with a health bar overhead. It takes 4 hits at level 10, 5 at level 20, 7 at level 30 (25% more each tier). When it arrives it stops, raises its arms, and every stray stone still on the field lifts off and swirls into it. During the fight, any shot that lands short of it gets sucked in too. Every 2 stones it absorbs add a hit, and each one makes it bigger. Shots that land past it are safe.
 - **Bonuses** (hit them to collect):
   - Power cell case: +30 shield
   - Ammo crate: sling upgrade (faster reload, bigger impact, longer roll). Boulders roll a little after landing at first and farther with each upgrade, and can smash hazards they roll into. At sling level 5 they also keep rolling after a direct hit.
   - Gold bars: +500 points
-- **On the field:** only missed boulders stay on the ground, and they fade after about 7 seconds. Boulders knock each other around like billiard balls: the harder a stone is hit, the faster and farther it rolls, and a knocked stone can roll into a hazard and smash it. A hazard that runs into a stone lying on the ground sets it off: the stone explodes and destroys the hazard (except the boss, which absorbs stones).
+- **On the field:** only missed boulders stay on the ground, and they fade 3 seconds after they stop rolling. Boulders knock each other around like billiard balls: the harder a stone is hit, the faster and farther it rolls, and a knocked stone can roll into a hazard and smash it. A hazard that runs into a stone lying on the ground sets it off: the stone explodes and destroys the hazard (except the boss, which absorbs stones).
 - **Split shot:** tap the button left of the sling to arm the loaded boulder. The moment you throw it, it becomes 3 smaller rocks chained together that spread out sideways as they fly, covering a wider area. Each rock can smash a hazard. You earn one every 5 levels and can hold up to 3.
 - **Points** float up over what you smashed, then fly to the scoreboard and tick in when they arrive.
 - **Streaks:** every 5 smashes in a row raises your points multiplier. Letting something through resets it.

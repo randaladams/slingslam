@@ -1488,7 +1488,7 @@ class GameView(context: Context, private val onExit: () -> Unit = {}) : View(con
     private fun tutText(): String = when (tutStep) {
         0 -> "Touch inside the circle at the bottom, pull back, and let go to throw a boulder."
         1 -> "The SIDE VIEW up top shows the arc of every shot. The ✕ marks where it landed. Tap to continue."
-        2 -> "An oil drum is rolling in. The farther you pull back, the farther you throw. Smash it!"
+        2 -> "A boulder is rolling in. The farther you pull back, the farther you throw. Smash it!"
         3 -> "Close ones need a short, gentle pull. Short throws fly low and fast."
         4 -> "To aim RIGHT, pull down and to the LEFT. To aim left, pull to the right."
         5 -> "Tap the SPLIT button, then throw. Your boulder becomes 3 chained rocks that spread out as they fly, hitting a wider area."

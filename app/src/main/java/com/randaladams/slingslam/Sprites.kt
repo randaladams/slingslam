@@ -83,7 +83,7 @@ class Sprites {
     fun hazard(c: Canvas, hz: Hazard, cx: Float, bottom: Float, u: Float, side: Boolean, clock: Float) {
         val r = hz.radius * u
         when (hz.kind) {
-            Kind.BARREL -> drum(c, hz, cx, bottom, r, side)
+            Kind.BARREL -> roller(c, hz, cx, bottom - r, r)
             Kind.ROCK -> rock(c, hz, cx, bottom - r * 0.9f, r)
             Kind.BOSS -> {
                 golem(c, hz, cx, bottom, r)
@@ -93,7 +93,7 @@ class Sprites {
                 }
                 return
             }
-            Kind.PLANT -> bramble(c, hz, cx, bottom, u)
+            Kind.PLANT -> scree(c, hz, cx, bottom, r)
             Kind.ENERGY -> shieldCell(c, hz, cx, bottom, r, clock)
             Kind.UPGRADE -> ammoCrate(c, cx, bottom, r)
             Kind.GOLD -> goldBars(c, hz, cx, bottom, r)
@@ -104,60 +104,56 @@ class Sprites {
         }
     }
 
-    /** Olive oil drum. Head-on in the lane (rolling at you), end-on in the side view. */
-    private fun drum(c: Canvas, hz: Hazard, cx: Float, bottom: Float, r: Float, side: Boolean) {
-        val cy = bottom - r
-        if (side) {
-            paint.color = Color.BLACK // opaque so the shader is not faded
-            paint.shader = RadialGradient(
-                cx - r * 0.3f, cy - r * 0.3f, r * 1.3f,
-                intArrayOf(0xFF7D8559.toInt(), 0xFF4B5233.toInt(), 0xFF22261A.toInt()),
-                floatArrayOf(0f, 0.6f, 1f), Shader.TileMode.CLAMP,
-            )
-            c.drawCircle(cx, cy, r, paint)
-            paint.shader = null
-            stroke.color = 0xFF2B2F20.toInt()
-            stroke.strokeWidth = r * 0.12f
-            c.drawCircle(cx, cy, r * 0.88f, stroke)
-            // bung hole turning as it rolls
-            val a = -hz.spin
-            fill(0xFF1E2116.toInt())
-            c.drawCircle(cx + cos(a) * r * 0.55f, cy + sin(a) * r * 0.55f, r * 0.12f, paint)
-            fill(0x557A4A2A)
-            c.drawCircle(cx + cos(a + 2f) * r * 0.4f, cy + sin(a + 2f) * r * 0.4f, r * 0.25f, paint)
-            return
+    /** A round granite boulder rolling straight at you: speckles and cracks turn with it. */
+    private fun roller(c: Canvas, hz: Hazard, cx: Float, cy: Float, r: Float) {
+        path.reset()
+        val n = 14
+        for (k in 0 until n) {
+            val a = k * tau / n
+            val rr = r * (0.94f + 0.06f * hz.shape[k % 9])
+            val x = cx + cos(a) * rr
+            val y = cy + sin(a) * rr
+            if (k == 0) path.moveTo(x, y) else path.lineTo(x, y)
         }
-        val hw = r * 1.1f
-        rect.set(cx - hw, cy - r, cx + hw, cy + r)
-        paint.color = Color.BLACK // opaque so the shader is not faded
-        paint.shader = LinearGradient(
-            cx - hw, 0f, cx + hw, 0f,
-            intArrayOf(0xFF1F2316.toInt(), 0xFF4B5233.toInt(), 0xFF8A9264.toInt(), 0xFF4B5233.toInt(), 0xFF1F2316.toInt()),
-            floatArrayOf(0f, 0.25f, 0.42f, 0.7f, 1f), Shader.TileMode.CLAMP,
+        path.close()
+        paint.color = Color.BLACK
+        paint.shader = RadialGradient(
+            cx - r * 0.35f, cy - r * 0.4f, r * 1.5f,
+            intArrayOf(0xFF9A9286.toInt(), 0xFF5F584F.toInt(), 0xFF231F1B.toInt()),
+            floatArrayOf(0f, 0.55f, 1f), Shader.TileMode.CLAMP,
         )
-        c.drawRoundRect(rect, r * 0.18f, r * 0.18f, paint)
+        c.drawPath(path, paint)
         paint.shader = null
-        // rust blotches
-        for (k in 0 until 4) {
-            fill(Color.argb(110, 122, 74, 42))
-            val bx = cx + (hz.shape[k] - 0.93f) * hw * 5f
-            val by = cy + (hz.shape[k + 4] - 0.93f) * r * 5f
-            c.drawCircle(bx.coerceIn(cx - hw * 0.8f, cx + hw * 0.8f), by.coerceIn(cy - r * 0.8f, cy + r * 0.8f), r * 0.16f * hz.shape[k + 1], paint)
+        // granite speckle, rotating as it rolls
+        for (k in 0 until 9) {
+            val a = hz.spin + k * 0.7f
+            val d = r * (0.2f + 0.6f * ((k * 37) % 10) / 10f)
+            fill(if (k % 3 == 0) 0x55D8D0C4 else 0x55201C18)
+            c.drawCircle(cx + cos(a) * d, cy + sin(a) * d * 0.95f, r * 0.05f, paint)
         }
-        // rolling ribs and a faded yellow band
-        val phase = ((hz.spin / tau) % 1f + 1f) % 1f
-        for (k in 0..2) {
-            val t = (k / 3f + phase) % 1f
-            val vis = sin(t * PI.toFloat())
-            val yy = cy - r * cos(t * PI.toFloat())
-            val thick = r * 0.1f * vis
-            fill(if (k == 1) Color.argb((200 * vis).toInt(), 184, 150, 46) else Color.argb((220 * vis).toInt(), 25, 28, 18))
-            c.drawRect(cx - hw, yy - thick, cx + hw, yy + thick, paint)
+        stroke.color = 0xAA1B1814.toInt()
+        stroke.strokeWidth = max(1f, r * 0.05f)
+        val ca = hz.spin
+        c.drawLine(cx + cos(ca) * r * 0.1f, cy + sin(ca) * r * 0.1f, cx + cos(ca + 0.3f) * r * 0.8f, cy + sin(ca + 0.3f) * r * 0.8f, stroke)
+        stroke.color = 0xFF1A1714.toInt()
+        stroke.strokeWidth = max(1f, r * 0.05f)
+        c.drawPath(path, stroke)
+    }
+
+    /** A loose cluster of stones tumbling together, weaving side to side. */
+    private fun scree(c: Canvas, hz: Hazard, cx: Float, bottom: Float, r: Float) {
+        val seed = (hz.baseX * 97f).toInt()
+        val tumble = sin(hz.age * 4f) * 0.25f
+        fill(Color.argb(70, 0, 0, 0))
+        rect.set(cx - r * 1.2f, bottom - r * 0.15f, cx + r * 1.2f, bottom + r * 0.15f)
+        c.drawOval(rect, paint)
+        slab(c, cx - r * 0.55f, bottom - r * 0.42f, r * 0.5f, r * 0.42f, seed, tumble, 0.9f)
+        slab(c, cx + r * 0.55f, bottom - r * 0.38f, r * 0.46f, r * 0.38f, seed + 1, -tumble, 0.85f)
+        slab(c, cx + r * 0.05f, bottom - r * 0.95f, r * 0.55f, r * 0.48f, seed + 2, tumble * 1.5f, 1f)
+        if (abs(sin(hz.age * 4f)) > 0.97f) {
+            fill(0x338D7B68)
+            c.drawCircle(cx, bottom - r * 0.1f, r * 0.6f, paint)
         }
-        stroke.color = 0xFF15170F.toInt()
-        stroke.strokeWidth = max(1f, r * 0.06f)
-        rect.set(cx - hw, cy - r, cx + hw, cy + r)
-        c.drawRoundRect(rect, r * 0.18f, r * 0.18f, stroke)
     }
 
     // ------------------------------------------------------------ boss golem
@@ -331,44 +327,6 @@ class Sprites {
             c.drawLine(cx - r * 0.55f, cy - r * 0.45f, cx - r * 0.05f, cy + r * 0.05f, stroke)
             c.drawLine(cx - r * 0.05f, cy + r * 0.05f, cx + r * 0.15f, cy + r * 0.65f, stroke)
             c.drawLine(cx - r * 0.05f, cy + r * 0.05f, cx + r * 0.6f, cy - r * 0.25f, stroke)
-        }
-    }
-
-    /** A tangle of thorn bramble that creeps and sways toward you. */
-    private fun bramble(c: Canvas, hz: Hazard, cx: Float, bottom: Float, u: Float) {
-        val sway = sin(hz.age * 2.2f) * 0.25f
-        fill(Color.argb(70, 0, 0, 0))
-        rect.set(cx - u * 2.6f, bottom - u * 0.5f, cx + u * 2.6f, bottom + u * 0.3f)
-        c.drawOval(rect, paint)
-        for (k in 0 until 14) {
-            val base = -PI.toFloat() / 2f + (k - 6.5f) * 0.19f + sway * (0.5f + k % 3 * 0.3f)
-            val len = u * (2.6f + 2.2f * hz.shape[k % 9]) * (if (k % 4 == 0) 1.15f else 1f)
-            val bx = cx + (k - 6.5f) * u * 0.18f
-            val ex = bx + cos(base) * len
-            val ey = bottom + sin(base) * len
-            val mx = bx + cos(base - 0.5f) * len * 0.55f
-            val my = bottom + sin(base - 0.5f) * len * 0.55f
-            path.reset()
-            path.moveTo(bx, bottom)
-            path.quadTo(mx, my, ex, ey)
-            stroke.color = if (k % 3 == 0) 0xFF4A3420.toInt() else 0xFF3A2A1C.toInt()
-            stroke.strokeWidth = max(1f, u * (0.16f + 0.05f * (k % 2)))
-            c.drawPath(path, stroke)
-            // thorns
-            stroke.strokeWidth = max(1f, u * 0.07f)
-            for (t in 1..3) {
-                val f = t / 4f
-                val tx = bx + (mx - bx) * f * 2f * (1 - f) + (ex - bx) * f * f
-                val ty = bottom + (my - bottom) * f * 2f * (1 - f) + (ey - bottom) * f * f
-                val ta = base + (if (t % 2 == 0) 1.2f else -1.2f)
-                c.drawLine(tx, ty, tx + cos(ta) * u * 0.35f, ty + sin(ta) * u * 0.35f, stroke)
-            }
-            // a few dull leaves
-            if (k % 3 == 1) {
-                fill(0xFF55603A.toInt())
-                rect.set(ex - u * 0.35f, ey - u * 0.18f, ex + u * 0.35f, ey + u * 0.18f)
-                c.drawOval(rect, paint)
-            }
         }
     }
 

@@ -35,7 +35,7 @@ object K {
     const val SHIELD_PER_KILL = 6f
     const val MAX_SLING = 5
     const val HAZARDS_PER_LEVEL = 6
-    const val MISS_LIFE = 7f          // seconds a missed boulder lies on the field
+    const val MISS_LIFE = 3f          // seconds a missed boulder stays once it has stopped rolling
     const val MAX_ON_GROUND = 40
 }
 
@@ -49,7 +49,7 @@ enum class Kind(
 ) {
     BARREL(false, 2.2f, 4.4f, 20f, 100, 1),
     ROCK(false, 3.0f, 5.0f, 30f, 200, 2),
-    PLANT(false, 2.6f, 5.5f, 15f, 150, 1),
+    PLANT(false, 2.6f, 4.4f, 15f, 150, 1),
     ENERGY(true, 2.0f, 4.0f, 0f, 50, 1),
     UPGRADE(true, 2.0f, 4.0f, 0f, 100, 1),
     GOLD(true, 2.0f, 4.0f, 0f, 500, 1),
@@ -298,7 +298,7 @@ class World(private val listener: WorldListener, seed: Long = System.nanoTime())
             val x = (rnd.nextFloat() * 2f - 1f) * 3f
             val boss = Hazard(Kind.BOSS, x, K.Z_FAR + 6f, hazardSpeed * 0.45f, shape)
             // each boss is a little tougher than the last
-            boss.hp = Kind.BOSS.hp + (level / 10 - 1)
+            boss.hp = kotlin.math.ceil((Kind.BOSS.hp + (level / 10 - 1)) * 1.25f).toInt()
             boss.maxHp = boss.hp
             hazards.add(boss)
             // every stone left on the field gets sucked into it, one after another
@@ -668,12 +668,13 @@ class World(private val listener: WorldListener, seed: Long = System.nanoTime())
                 }
             }
             if (b.landed) {
-                b.rest += dt
                 b.x += b.vx * dt
                 b.z += b.vz * dt
                 b.vx *= max(0f, 1f - b.friction * dt)
                 b.vz *= max(0f, 1f - b.friction * dt)
                 val sp = hypot(b.vx, b.vz)
+                // a missed stone's clock only runs once it has come to a stop
+                if (b.missed && sp > 0.6f) b.rest = 0f else b.rest += dt
                 b.spin += sp * dt * 0.5f
                 // a rolling boulder can plough into hazards
                 if (sp > 2f) {
@@ -845,14 +846,13 @@ class World(private val listener: WorldListener, seed: Long = System.nanoTime())
             listener.onSound(Sfx.BREAK)
             listener.onVibrate(45, 200)
             val color = when (h.kind) {
-                Kind.BARREL -> 0xFF4E5340.toInt()
+                Kind.BARREL -> 0xFF4A443D.toInt()
                 Kind.ROCK, Kind.BOSS -> 0xFF6E655B.toInt()
                 else -> 0xFF4A3B26.toInt()
             }
             val big = if (h.kind == Kind.BOSS) 3 else 1
             burst(h.x, h.height * 0.5f, h.z, color, 26 * big, 22f * (1f + (big - 1) * 0.3f))
-            if (h.kind == Kind.BARREL) fire(h.x, 2f, h.z, 14)
-            smoke(h.x, 1.5f, h.z, 9 * big, if (h.kind == Kind.BARREL) 0xFF3A3632.toInt() else 0xFF8D7B68.toInt(), 2.2f * big)
+            smoke(h.x, 1.5f, h.z, 9 * big, 0xFF8D7B68.toInt(), 2.2f * big)
             popups.add(Popup("+$pts", h.x, h.z, 0xFFFFFFFF.toInt(), big = true, value = pts))
             if (streak % 5 == 0) showBanner("STREAK! x$multiplier POINTS")
             return
