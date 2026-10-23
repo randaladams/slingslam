@@ -100,6 +100,7 @@ class Boulder(
     var r = K.BOULDER_R                   // fragments are smaller
     var split = false                     // split shot: bursts into 3 rocks when it hits something
     var fragment = false
+    var link: Boulder? = null             // split shot: chained to the middle rock while in flight
 }
 
 class Particle(
@@ -149,6 +150,8 @@ class World(private val listener: WorldListener, seed: Long = System.nanoTime())
     companion object {
         /** Rolling resistance after a billiard knock: low, so a hard hit rolls a long way. */
         const val BILLIARD_FRICTION = 0.55f
+        const val SPLIT_SPREAD = 9f      // sideways speed of the outer split rocks
+        const val CHAIN_LEN = 3.6f       // how far apart the chained rocks can get
     }
 
     private val rnd = Random(seed)
@@ -237,6 +240,7 @@ class World(private val listener: WorldListener, seed: Long = System.nanoTime())
         b.life = 1.4f + 1.2f * lv
         boulders.add(b)
         lastShot = b
+        if (b.split) launchSplit(b)
         loaded = false
         reloadT = 0f
         thrown++
@@ -562,12 +566,63 @@ class World(private val listener: WorldListener, seed: Long = System.nanoTime())
         listener.onSound(Sfx.BREAK)
     }
 
+    /**
+     * Split shot: as soon as it leaves the sling the boulder becomes three smaller rocks
+     * chained together, the outer two swinging out sideways until the chains go taut.
+     */
+    private fun launchSplit(b: Boulder) {
+        b.split = false
+        b.r = K.BOULDER_R * 0.65f
+        val hl = hypot(b.vx, b.vz)
+        val px = if (hl > 0.01f) b.vz / hl else 1f     // sideways, perpendicular to the throw
+        val pz = if (hl > 0.01f) -b.vx / hl else 0f
+        for (side in intArrayOf(-1, 1)) {
+            val o = Boulder(b.x, b.y, b.z, b.vx + px * side * SPLIT_SPREAD, b.vy, b.vz + pz * side * SPLIT_SPREAD)
+            o.r = b.r
+            o.fragment = true
+            o.rolls = b.rolls
+            o.rollKeep = b.rollKeep
+            o.friction = b.friction
+            o.life = b.life
+            o.link = b
+            o.trail.add(floatArrayOf(o.x, o.y, o.z))
+            pending.add(o)
+        }
+        listener.onSound(Sfx.HIT)
+    }
+
+    /** Keeps chained rocks within chain length of the middle one; the chain breaks on landing or impact. */
+    private fun applyChains() {
+        for (o in boulders) {
+            val m = o.link ?: continue
+            if (o.landed || o.gone || m.landed || m.gone) {
+                o.link = null
+                continue
+            }
+            val dx = o.x - m.x
+            val dz = o.z - m.z
+            val d = hypot(dx, dz)
+            if (d > CHAIN_LEN && d > 1e-4f) {
+                val nx = dx / d
+                val nz = dz / d
+                o.x = m.x + nx * CHAIN_LEN
+                o.z = m.z + nz * CHAIN_LEN
+                val rel = (o.vx - m.vx) * nx + (o.vz - m.vz) * nz
+                if (rel > 0f) {
+                    o.vx -= rel * nx
+                    o.vz -= rel * nz
+                }
+            }
+        }
+    }
+
     private fun updateBoulders(dt: Float) {
         if (pending.isNotEmpty()) {
             boulders.addAll(pending)
             pending.clear()
         }
         collideBoulders()
+        applyChains()
         // keep the field from filling up: oldest misses go first
         var onGround = boulders.count { it.landed && !it.pulled }
         if (onGround > K.MAX_ON_GROUND) {

@@ -233,7 +233,7 @@ class GameView(context: Context, private val onExit: () -> Unit = {}) : View(con
         hudTop = topInset
         hudH = h * 0.072f
         sideTop = hudTop + hudH
-        sideBottom = sideTop + h * 0.207f
+        sideBottom = sideTop + h * 0.125f
         sideGround = sideBottom - (sideBottom - sideTop) * 0.16f
         sidePadL = w * 0.09f
         sidePadR = w * 0.04f
@@ -586,6 +586,11 @@ class GameView(context: Context, private val onExit: () -> Unit = {}) : View(con
                     }
                     val a = if (it.landed) ((it.groundLife - it.rest) / 0.5f).coerceIn(0f, 1f) else 1f
                     art.boulder(c, lx(it.x, it.z), ly(it.z, it.y) - r, r, it.spin, a)
+                    val m = it.link
+                    if (m != null) {
+                        val mr = m.r * unitPx * sAt(m.z)
+                        drawChain(c, lx(it.x, it.z), ly(it.z, it.y) - r, lx(m.x, m.z), ly(m.z, m.y) - mr, max(2f, r * 0.22f))
+                    }
                 }
                 is Particle -> drawParticle(c, it, lx(it.x, it.z), ly(it.z, it.y), unitPx * sAt(it.z))
             }
@@ -971,6 +976,8 @@ class GameView(context: Context, private val onExit: () -> Unit = {}) : View(con
             if (b.landed && b.rest > b.groundLife - 0.4f) continue
             val r = b.r * sideScaleY * 1.3f
             art.boulder(c, sx(b.z), sy(b.y) - r, r, b.spin, 1f)
+            val m = b.link
+            if (m != null) drawChain(c, sx(b.z), sy(b.y) - r, sx(m.z), sy(m.y) - m.r * sideScaleY * 1.3f, max(1.5f, r * 0.2f))
         }
 
         for (p in world.particles) {
@@ -1268,6 +1275,30 @@ class GameView(context: Context, private val onExit: () -> Unit = {}) : View(con
 
     // ---------------------------------------------------------------- split button
 
+    /** An iron chain between two rocks: dark links with a lighter glint. */
+    private fun drawChain(c: Canvas, x0: Float, y0: Float, x1: Float, y1: Float, wd: Float) {
+        val len = hypot(x1 - x0, y1 - y0)
+        if (len < 1f) return
+        val n = max(2, (len / (wd * 2.2f)).toInt())
+        stroke.pathEffect = null
+        for (i in 0 until n) {
+            val t0 = i / n.toFloat()
+            val t1 = (i + 0.8f) / n
+            val ax = x0 + (x1 - x0) * t0
+            val ay = y0 + (y1 - y0) * t0
+            val bx = x0 + (x1 - x0) * t1
+            val by = y0 + (y1 - y0) * t1
+            stroke.color = 0xFF2B2A28.toInt()
+            stroke.strokeWidth = wd * (if (i % 2 == 0) 1f else 0.6f)
+            c.drawLine(ax, ay, bx, by, stroke)
+            if (i % 2 == 0) {
+                stroke.color = 0x88A9A49B.toInt()
+                stroke.strokeWidth = wd * 0.3f
+                c.drawLine(ax, ay - wd * 0.2f, bx, by - wd * 0.2f, stroke)
+            }
+        }
+    }
+
     private fun drawSplitButton(c: Canvas) {
         val n = world.splitCharges
         val armed = world.splitArmed
@@ -1339,7 +1370,7 @@ class GameView(context: Context, private val onExit: () -> Unit = {}) : View(con
         2 -> "An oil drum is rolling in. The farther you pull back, the farther you throw. Smash it!"
         3 -> "Close ones need a short, gentle pull. Short throws fly low and fast."
         4 -> "To aim RIGHT, pull down and to the LEFT. To aim left, pull to the right."
-        5 -> "Tap the SPLIT button, then hit a drum. The boulder bursts into 3 rocks that spread the damage."
+        5 -> "Tap the SPLIT button, then throw. Your boulder becomes 3 chained rocks that spread out as they fly, hitting a wider area."
         6 -> "You earn a split shot every 5 levels (hold up to 3). Hit power cells for shield, ammo crates to upgrade your sling, and gold for points. Tap to continue."
         else -> "Every 10th level a BOSS golem appears. Any stones left on the field get sucked into it and make it tougher, so keep your misses down! Tap to start."
     }

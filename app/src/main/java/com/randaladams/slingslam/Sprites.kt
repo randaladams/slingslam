@@ -160,51 +160,141 @@ class Sprites {
         c.drawRoundRect(rect, r * 0.18f, r * 0.18f, stroke)
     }
 
-    /** The boss: a golem built from boulders, with a rock torso, boulder limbs and glowing eyes. */
-    private fun golem(c: Canvas, hz: Hazard, cx: Float, bottom: Float, r: Float) {
-        val walk = if (hz.summoning) 0f else sin(hz.age * 3.2f)
-        val legR = r * 0.42f
-        // legs: thigh and foot on each side, stepping in turn
-        for (side in intArrayOf(-1, 1)) {
-            val lift = max(0f, walk * side) * r * 0.28f
-            val lx = cx + side * r * 0.48f
-            boulder(c, lx + side * r * 0.04f, bottom - r * 1.15f - lift * 0.5f, legR * 0.9f, side * 1.1f, 1f)
-            boulder(c, lx + side * r * 0.08f, bottom - legR - lift, legR, side * 2.3f, 1f)
+    // ------------------------------------------------------------ boss golem
+
+    /** Deterministic 0..1 noise so each slab keeps its shape from frame to frame. */
+    private fun hashF(seed: Int, k: Int): Float {
+        val v = sin(seed * 12.9898f + k * 78.233f) * 43758.547f
+        return v - kotlin.math.floor(v)
+    }
+
+    /**
+     * One jagged stone slab: an irregular polygon lit from the upper left, with a dark
+     * gap outline (so stacked slabs read as separate stones), cracks and lichen.
+     */
+    private fun slab(c: Canvas, cx: Float, cy: Float, rw: Float, rh: Float, seed: Int, rot: Float, tint: Float = 1f) {
+        val n = 8
+        path.reset()
+        for (k in 0 until n) {
+            val a = rot + k * tau / n + (hashF(seed, k + 20) - 0.5f) * 0.5f
+            val m = 0.72f + 0.28f * hashF(seed, k)
+            val x = cx + cos(a) * rw * m
+            val y = cy + sin(a) * rh * m
+            if (k == 0) path.moveTo(x, y) else path.lineTo(x, y)
         }
-        // torso
-        val ty = bottom - r * 2.05f
-        rock(c, hz, cx, ty, r)
-        // arms: shoulder, elbow, fist
+        path.close()
+        // dark gap around the stone
+        stroke.shader = null
+        stroke.color = 0xFF16130F.toInt()
+        stroke.strokeWidth = max(1.5f, (rw + rh) * 0.09f)
+        c.drawPath(path, stroke)
+        // body
+        val rr = max(rw, rh)
+        paint.color = Color.BLACK
+        paint.shader = RadialGradient(
+            cx - rw * 0.35f, cy - rh * 0.45f, rr * 1.5f,
+            intArrayOf(Col.scale(0xFF8E877B.toInt(), tint), Col.scale(0xFF5C564D.toInt(), tint), Col.scale(0xFF2A2621.toInt(), tint)),
+            floatArrayOf(0f, 0.5f, 1f), Shader.TileMode.CLAMP,
+        )
+        c.drawPath(path, paint)
+        paint.shader = null
+        // flat facet catching the light
+        fill(0x1FFFFFFF)
+        path.reset()
+        path.moveTo(cx - rw * 0.55f, cy - rh * 0.2f)
+        path.lineTo(cx - rw * 0.1f, cy - rh * 0.62f)
+        path.lineTo(cx + rw * 0.25f, cy - rh * 0.35f)
+        path.lineTo(cx - rw * 0.15f, cy + rh * 0.05f)
+        path.close()
+        c.drawPath(path, paint)
+        // cracks
+        stroke.color = 0xAA1B1814.toInt()
+        stroke.strokeWidth = max(1f, rr * 0.04f)
+        val ca = hashF(seed, 40) * tau
+        c.drawLine(cx + cos(ca) * rw * 0.15f, cy + sin(ca) * rh * 0.15f, cx + cos(ca + 0.4f) * rw * 0.7f, cy + sin(ca + 0.4f) * rh * 0.7f, stroke)
+        c.drawLine(cx + cos(ca + 0.4f) * rw * 0.45f, cy + sin(ca + 0.4f) * rh * 0.45f, cx + cos(ca + 1.2f) * rw * 0.62f, cy + sin(ca + 1.2f) * rh * 0.62f, stroke)
+        // lichen and grit
+        for (k in 0 until 3) {
+            fill(if (k == 0) 0x40707A4A else 0x30000000)
+            c.drawCircle(cx + (hashF(seed, 50 + k) - 0.5f) * rw, cy + (hashF(seed, 60 + k) - 0.3f) * rh * 0.8f, rr * (0.06f + 0.05f * hashF(seed, 70 + k)), paint)
+        }
+    }
+
+    /**
+     * The boss: a hulking, hunched giant built from stacked stone slabs.
+     * Short thick legs, a massive chest, heavy shoulders, a small head sunk low between them,
+     * and long arms ending in huge stone fists. It lumbers forward, and raises its arms while
+     * it pulls stray stones in.
+     */
+    private fun golem(c: Canvas, hz: Hazard, cx: Float, bottom: Float, r: Float) {
+        val walk = if (hz.summoning) 0f else sin(hz.age * 2.4f)
+        val bob = if (hz.summoning) 0f else abs(walk) * r * 0.05f
+        val base = bottom - bob
+
+        // shadow
+        fill(Color.argb(90, 0, 0, 0))
+        rect.set(cx - r * 1.7f, bottom - r * 0.18f, cx + r * 1.7f, bottom + r * 0.18f)
+        c.drawOval(rect, paint)
+
+        // legs: two slabs each, stepping in turn
         for (side in intArrayOf(-1, 1)) {
-            val sx = cx + side * r * 0.95f
-            val sy = ty - r * 0.35f
-            val ux: Float
-            val uy: Float
+            val lift = max(0f, walk * side) * r * 0.22f
+            val lx = cx + side * r * 0.5f
+            slab(c, lx, base - r * 1.05f - lift * 0.5f, r * 0.42f, r * 0.42f, 11 + side, 0.3f, 0.92f)
+            slab(c, lx + side * r * 0.05f, base - r * 0.36f - lift, r * 0.48f, r * 0.36f, 13 + side, 0.1f, 0.85f)
+        }
+
+        // arms behind the body swing opposite the legs; raised when summoning
+        val shY = base - r * 2.55f
+        for (side in intArrayOf(-1, 1)) {
+            val sx = cx + side * r * 1.1f
+            val ex: Float
+            val ey: Float
             val fx: Float
             val fy: Float
             if (hz.summoning) {
-                val wob = sin(hz.age * 9f + side) * r * 0.08f
-                ux = sx + side * r * 0.35f; uy = sy - r * 0.55f + wob
-                fx = sx + side * r * 0.55f; fy = sy - r * 1.15f - wob
+                val wob = sin(hz.age * 7f + side) * r * 0.06f
+                ex = sx + side * r * 0.45f; ey = shY - r * 0.7f + wob
+                fx = sx + side * r * 0.55f; fy = shY - r * 1.45f - wob
             } else {
-                val swing = -walk * side * 0.45f
-                ux = sx + side * r * 0.22f + sin(swing) * r * 0.3f; uy = sy + r * 0.45f
-                fx = sx + side * r * 0.3f + sin(swing) * r * 0.65f; fy = sy + r * 1.05f
+                val sw = -walk * side * 0.35f
+                ex = sx + side * r * 0.3f + sin(sw) * r * 0.25f; ey = shY + r * 0.85f
+                fx = sx + side * r * 0.32f + sin(sw) * r * 0.55f; fy = shY + r * 1.75f
             }
-            boulder(c, sx, sy, r * 0.34f, side * 0.7f, 1f)
-            boulder(c, ux, uy, r * 0.32f, side * 1.9f, 1f)
-            boulder(c, fx, fy, r * 0.42f, side * 2.8f, 1f)
+            slab(c, (sx + ex) / 2f, (shY + ey) / 2f, r * 0.36f, r * 0.46f, 21 + side, 0.6f, 0.9f)
+            slab(c, (ex + fx) / 2f, (ey + fy) / 2f, r * 0.33f, r * 0.42f, 23 + side, 1.2f, 0.88f)
+            slab(c, fx, fy + (if (hz.summoning) 0f else r * 0.15f), r * 0.5f, r * 0.46f, 25 + side, 2.1f, 0.95f)
         }
-        // head with glowing eyes
-        val hy = ty - r * 1.2f
-        boulder(c, cx, hy, r * 0.44f, 0.4f, 1f)
-        val glow = if (hz.summoning) 1f else 0.7f + 0.3f * sin(hz.age * 4f)
-        fill(Color.argb((90 * glow).toInt(), 255, 120, 30))
-        c.drawCircle(cx - r * 0.16f, hy - r * 0.02f, r * 0.13f, paint)
-        c.drawCircle(cx + r * 0.16f, hy - r * 0.02f, r * 0.13f, paint)
-        fill(Color.argb((255 * glow).toInt(), 255, 170, 60))
-        c.drawCircle(cx - r * 0.16f, hy - r * 0.02f, r * 0.06f, paint)
-        c.drawCircle(cx + r * 0.16f, hy - r * 0.02f, r * 0.06f, paint)
+
+        // hips and a massive, slightly hunched chest
+        slab(c, cx, base - r * 1.5f, r * 0.85f, r * 0.42f, 31, 0.2f, 0.9f)
+        slab(c, cx - r * 0.05f, base - r * 2.15f, r * 1.05f, r * 0.62f, 33, 0.5f, 1f)
+        slab(c, cx + r * 0.25f, base - r * 1.95f, r * 0.5f, r * 0.38f, 34, 1.4f, 0.95f)
+
+        // heavy shoulders, higher than the head
+        for (side in intArrayOf(-1, 1)) {
+            slab(c, cx + side * r * 0.95f, shY - r * 0.05f, r * 0.58f, r * 0.48f, 41 + side, 0.9f, 1.05f)
+        }
+
+        // small head sunk low between the shoulders, with deep-set embers for eyes
+        val hy = shY - r * 0.12f
+        slab(c, cx, hy, r * 0.36f, r * 0.33f, 51, 0.4f, 0.98f)
+        fill(0xCC0E0C0A.toInt())
+        rect.set(cx - r * 0.25f, hy - r * 0.08f, cx + r * 0.25f, hy + r * 0.04f)
+        c.drawRect(rect, paint)
+        val ember = if (hz.summoning) 1f else 0.55f + 0.25f * sin(hz.age * 3f)
+        fill(Color.argb((70 * ember).toInt(), 255, 110, 30))
+        c.drawCircle(cx - r * 0.12f, hy - r * 0.02f, r * 0.08f, paint)
+        c.drawCircle(cx + r * 0.12f, hy - r * 0.02f, r * 0.08f, paint)
+        fill(Color.argb((230 * ember).toInt(), 255, 150, 50))
+        c.drawCircle(cx - r * 0.12f, hy - r * 0.02f, r * 0.03f, paint)
+        c.drawCircle(cx + r * 0.12f, hy - r * 0.02f, r * 0.03f, paint)
+
+        // dust shaken loose as it walks
+        if (!hz.summoning && abs(walk) > 0.95f) {
+            fill(0x338D7B68)
+            c.drawCircle(cx + (if (walk > 0) -1 else 1) * r * 0.55f, bottom - r * 0.1f, r * 0.35f, paint)
+        }
     }
 
     private fun rock(c: Canvas, hz: Hazard, cx: Float, cy: Float, r: Float) {
