@@ -1385,14 +1385,16 @@ class GameView(context: Context, private val onExit: () -> Unit = {}) : View(con
     }
 
     private fun drawScores(c: Canvas) {
+        // keep everything below the banner space
+        val off = max(0f, topInset + adH + h * 0.065f - h * 0.12f)
         dim(c, 235)
         text.textAlign = Paint.Align.CENTER
         text.textSize = w * 0.09f
         text.color = khaki
-        outlinedText(c, "SCOREBOARD", w / 2f, h * 0.12f)
+        outlinedText(c, "SCOREBOARD", w / 2f, (off + h * 0.12f))
 
         // featured high score
-        rect.set(w * 0.1f, h * 0.15f, w * 0.9f, h * 0.27f)
+        rect.set(w * 0.1f, (off + h * 0.15f), w * 0.9f, (off + h * 0.27f))
         paint.shader = null
         paint.color = 0xFF2A2418.toInt()
         c.drawRoundRect(rect, h * 0.015f, h * 0.015f, paint)
@@ -1402,24 +1404,24 @@ class GameView(context: Context, private val onExit: () -> Unit = {}) : View(con
         c.drawRoundRect(rect, h * 0.015f, h * 0.015f, stroke)
         text.textSize = w * 0.04f
         text.color = amber
-        c.drawText("HIGH SCORE", w / 2f, h * 0.18f, text)
+        c.drawText("HIGH SCORE", w / 2f, (off + h * 0.18f), text)
         text.textSize = w * 0.1f
         text.color = 0xFFF4EEDF.toInt()
-        c.drawText("$best", w / 2f, h * 0.232f, text)
+        c.drawText("$best", w / 2f, (off + h * 0.232f), text)
         val bl = prefs.getInt("bestLevel", 0)
         if (bl > 0) {
             text.textSize = w * 0.035f
             text.color = khaki
             val withC = if (prefs.getBoolean("bestContinued", false)) "  •  with a continue" else ""
-            c.drawText("reached level $bl$withC", w / 2f, h * 0.258f, text)
+            c.drawText("reached level $bl$withC", w / 2f, (off + h * 0.258f), text)
         }
 
         val list = loadScores()
         text.textSize = w * 0.035f
         text.color = Color.argb(170, 230, 220, 194)
-        c.drawText("LAST ${list.size} RUNS (NEWEST FIRST)", w / 2f, h * 0.305f, text)
-        val rowH = h * 0.026f
-        var y = h * 0.34f
+        c.drawText("LAST ${list.size} RUNS (NEWEST FIRST)", w / 2f, (off + h * 0.305f), text)
+        val rowH = h * 0.025f
+        var y = (off + h * 0.34f)
         text.textSize = w * 0.04f
         if (list.isEmpty()) {
             text.color = khaki

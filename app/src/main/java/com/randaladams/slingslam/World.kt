@@ -63,6 +63,12 @@ class Hazard(val kind: Kind, x: Float, var z: Float, var speed: Float, val shape
     var hp = kind.hp
     var maxHp = kind.hp
     var phase = 0f                // boss: side-to-side sway
+    var ammo = 0                  // boss: stones it has absorbed and can throw back
+    var throwCd = 3f              // boss: seconds until its next throw
+    var throwing = 0f             // boss: arm-raised throw pose timer
+    var airborne = false          // a rock the boss threw, still in the air
+    var vx = 0f
+    var vy = 0f
     var summoning = false         // boss: arms raised, pulling stones in
     var fed = 0                   // boss: stones absorbed
     var radius = kind.radius      // the boss grows, so size lives on the hazard
@@ -153,6 +159,7 @@ class World(private val listener: WorldListener, seed: Long = System.nanoTime())
         const val BILLIARD_FRICTION = 0.55f
         const val LEVEL_REST = 6f        // seconds of calm between levels (complete banner, then get ready)
         const val GET_READY = 3f         // last part of the rest shows a get-ready countdown
+        const val THROW_G = 30f          // gravity for the boss's thrown rocks (floatier than the player's)
         const val BOSS_DELAY = 2.5f      // pause after the final wave before the boss appears
         const val SPLIT_SPREAD = 9f      // sideways speed of the outer split rocks
         const val CHAIN_LEN = 3.6f       // how far apart the chained rocks can get
@@ -327,7 +334,7 @@ class World(private val listener: WorldListener, seed: Long = System.nanoTime())
             val x = (rnd.nextFloat() * 2f - 1f) * 3f
             val boss = Hazard(Kind.BOSS, x, K.Z_FAR + 6f, hazardSpeed * 0.45f, shape)
             // each boss is a little tougher than the last
-            boss.hp = kotlin.math.ceil((Kind.BOSS.hp + (level - 1)) * 1.25f).toInt()
+            boss.hp = kotlin.math.ceil((Kind.BOSS.hp + (level - 1)) * 1.25f * 1.25f).toInt()
             boss.maxHp = boss.hp
             hazards.add(boss)
             // every stone left on the field gets sucked into it, one after another
@@ -387,6 +394,24 @@ class World(private val listener: WorldListener, seed: Long = System.nanoTime())
         h.age += dt
         h.flash = max(0f, h.flash - dt * 4f)
         h.z -= h.speed * dt
+        if (h.airborne) {
+            // a rock thrown by the boss: arcs through the air, then rolls at you
+            h.x = (h.x + h.vx * dt).coerceIn(-K.LANE_HALF + 1f, K.LANE_HALF - 1f)
+            h.y += h.vy * dt
+            h.vy -= THROW_G * dt
+            h.spin += dt * 8f
+            if (h.y <= 0f) {
+                h.y = 0f
+                h.airborne = false
+                h.speed = hazardSpeed * 1.15f
+                burst(h.x, 0.3f, h.z, 0xFF5C4A3A.toInt(), 12, 10f)
+                smoke(h.x, 0.5f, h.z, 4, 0xFF8D7B68.toInt(), 1.6f)
+                shake = max(shake, 0.25f)
+                listener.onSound(Sfx.LAND)
+            }
+            if (h.z <= K.Z_REACH) reached(h)
+            return
+        }
         when (h.kind) {
             Kind.BARREL -> h.spin += h.speed * dt / h.radius
             Kind.ROCK -> {
@@ -407,7 +432,18 @@ class World(private val listener: WorldListener, seed: Long = System.nanoTime())
                         smoke(h.x + cos(a) * h.radius * 1.3f, 0.5f, h.z + sin(a) * h.radius * 0.6f, 1, 0xFF8D7B68.toInt(), 2.5f)
                     }
                 } else if (level >= 2) {
-                    // from the second boss on it sways side to side, faster and wider each level
+                    // from the second boss on it throws back the stones it absorbed;
+                    // from the fifth boss on it throws rocks whether it has absorbed any or not
+                    h.throwing = max(0f, h.throwing - dt)
+                    if ((h.ammo > 0 || level >= 5) && h.z > 20f) {
+                        h.throwCd -= dt
+                        if (h.throwCd <= 0f) {
+                            bossThrow(h)
+                            if (h.ammo > 0) h.ammo--
+                            h.throwCd = max(1.8f, 5.5f - 0.4f * (level - 2))
+                        }
+                    }
+                    // and it sways side to side, faster and wider each level
                     val amp = min(K.LANE_HALF - h.radius - 1f, 4f + 0.8f * (level - 2))
                     val lateral = min(9f, 1.5f + 1.1f * (level - 2))   // peak sideways speed
                     h.phase += dt * lateral / max(1f, amp)
@@ -436,10 +472,30 @@ class World(private val listener: WorldListener, seed: Long = System.nanoTime())
     }
 
     /** A boulder sucked into the boss makes it bigger and tougher. */
+    /** The boss hurls a rock that lands in front of you and rolls at your wall. */
+    private fun bossThrow(h: Hazard) {
+        val t = 1.4f
+        val y0 = h.height * 0.85f
+        val zFrom = h.z - h.radius
+        val zLand = h.z * 0.55f
+        val tx = (rnd.nextFloat() * 2f - 1f) * (K.LANE_HALF - 3f)
+        val r = Hazard(Kind.BARREL, h.x, zFrom, (zFrom - zLand) / t, FloatArray(9) { 0.8f + rnd.nextFloat() * 0.25f })
+        r.radius = Kind.BARREL.radius * 0.9f
+        r.airborne = true
+        r.y = y0
+        r.vx = (tx - h.x) / t
+        r.vy = (-y0 + 0.5f * THROW_G * t * t) / t
+        hazards.add(r)
+        h.throwing = 0.7f
+        listener.onSound(Sfx.THROW)
+        listener.onVibrate(25, 120)
+    }
+
     private fun growBoss(h: Hazard) {
         h.radius = min(9f, h.radius + 0.35f)
         h.height = h.radius * 3.2f
         h.fed++
+        if (level >= 2) h.ammo++
         if (h.fed % 2 == 0) h.hp = min(15, h.hp + 1)
         h.maxHp = max(h.maxHp, h.hp)
         h.flash = 0.6f

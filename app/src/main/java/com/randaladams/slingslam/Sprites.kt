@@ -248,7 +248,7 @@ class Sprites {
             val ey: Float
             val fx: Float
             val fy: Float
-            if (hz.summoning) {
+            if (hz.summoning || (hz.throwing > 0f && side == 1)) {
                 val wob = sin(hz.age * 7f + side) * r * 0.06f
                 ex = sx + side * r * 0.45f; ey = shY - r * 0.7f + wob
                 fx = sx + side * r * 0.55f; fy = shY - r * 1.45f - wob
