@@ -6,10 +6,10 @@ An Android game: lob boulders at the hazards rolling toward you before they smas
 
 - **Aim and fire:** touch inside the circle at the bottom and pull back. Power comes from how far you drag from where you first touched, so your finger can wander off the circle. Pulling left aims right, like a real sling. Drag back to your starting point to cancel.
 - **Short and long shots:** short pulls throw low and fast, almost straight out, for hazards that are close. Long pulls lob high and far.
-- **Read the side view:** the strip at the top shows the battlefield side-on: you on the left, the hazard coming from the right, the arc of every shot, and an ✕ where it landed. Use it to correct your distance on the next throw.
+- **Read the side view:** the strip at the top shows the battlefield side-on: you on the left, the hazard coming from the right, the arc of every shot, and an ✕ where it landed. While you pull back, a blue dotted arc and marker show where that shot will land.
 - **Reload:** after each throw the next boulder rolls off the pile on the right into the sling.
 - **Shield:** anything bad that reaches your sandbags drains it. Smashing hazards restores some, and it slowly recharges on its own. When it hits zero the game is over.
-- **Hazards** get faster every 6. They come one at a time, two at a time from level 7, and three at a time from level 12:
+- **Hazards** get faster every 6. They come one at a time, two at a time from level 5, and three at a time from level 10. There's a 3-second breather before each new level:
   - Rolling boulder: round granite, rolls straight at you
   - Jagged rock: slower, takes two hits (a cracked one slows down)
   - Rock cluster: a loose clump of tumbling stones that weaves side to side
@@ -18,12 +18,12 @@ An Android game: lob boulders at the hazards rolling toward you before they smas
   - Power cell case: +30 shield
   - Ammo crate: sling upgrade (faster reload, bigger impact, longer roll). Boulders roll a little after landing at first and farther with each upgrade, and can smash hazards they roll into. At sling level 5 they also keep rolling after a direct hit.
   - Gold bars: +500 points
-- **On the field:** only missed boulders stay on the ground, and they fade 3 seconds after they stop rolling. Boulders knock each other around like billiard balls: the harder a stone is hit, the faster and farther it rolls, and a knocked stone can roll into a hazard and smash it. A hazard that runs into a stone lying on the ground sets it off: the stone explodes and destroys the hazard (except the boss, which absorbs stones).
+- **On the field:** only missed boulders stay on the ground, and they fade 1.5 seconds after they stop rolling. Boulders knock each other around like billiard balls: the harder a stone is hit, the faster and farther it rolls, and a knocked stone can roll into a hazard and smash it. A hazard that runs into a stone lying on the ground sets it off: the stone explodes and destroys the hazard (except the boss, which absorbs stones).
 - **Split shot:** tap the button left of the sling to arm the loaded boulder. The moment you throw it, it becomes 3 smaller rocks chained together that spread out sideways as they fly, covering a wider area. Each rock can smash a hazard. You earn one every 5 levels and can hold up to 3.
 - **Points** float up over what you smashed, then fly to the scoreboard and tick in when they arrive.
 - **Streaks:** every 5 smashes in a row raises your points multiplier. Letting something through resets it.
 - **Tutorial:** an interactive practice run plays the first time you start, and any time from **How to play** on the title screen.
-- **Scoreboard:** keeps your last 20 runs with your high score featured at the top. Open it from the title screen or after a game.
+- **Scoreboard:** keeps your last 20 runs (score, level, and whether a continue was used) with your high score featured at the top. Open it from the title screen or after a game.
 - **Controls:** pause and sound are in the bottom-right corner, next to your thumb.
 - **Menus:** the pause menu has Resume and End game, game over has Watch ad to continue (once per run, and not when you end the game yourself), Play again, Scoreboard and Menu, and the title screen has How to play, Scores and Exit.
 - **Testing:** the − / + buttons at the right end of the score row jump levels. Remove them before release.

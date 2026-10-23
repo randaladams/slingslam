@@ -198,7 +198,7 @@ class GameView(context: Context, private val onExit: () -> Unit = {}) : View(con
         overT = 0f
         aiming = false
         shownScore = world.score
-        recordScore(world.score, world.level)
+        recordScore(world.score, world.level, world.continued)
         if (world.score > best) {
             best = world.score
             newBest = true
@@ -557,8 +557,7 @@ class GameView(context: Context, private val onExit: () -> Unit = {}) : View(con
         world.banner = "SHIELD RESTORED — KEEP GOING!"
         world.bannerT = 1.8f
         // the run isn't over after all: take back the score that was just recorded
-        val rest = loadScores().drop(1)
-        prefs.edit().putString("scores", rest.joinToString(",") { "${it.first}:${it.second}" }).apply()
+        saveScores(loadScores().drop(1))
         mode = Mode.PLAYING
         aiming = false
         lastNs = 0L
@@ -1125,6 +1124,34 @@ class GameView(context: Context, private val onExit: () -> Unit = {}) : View(con
         }
 
         // the last shot's arc and where it came down
+        // preview: where the shot you're pulling back would land
+        if (aiming && world.loaded && power() > 0f) {
+            val pts = world.predictPath(power(), aimAngle())
+            path.reset()
+            path.moveTo(sx(pts[0]), sy(pts[1]))
+            var k = 2
+            while (k < pts.size) {
+                path.lineTo(sx(pts[k]), sy(pts[k + 1]))
+                k += 2
+            }
+            stroke.pathEffect = dash
+            stroke.color = Color.argb(150, 120, 190, 255)
+            stroke.strokeWidth = w * 0.004f
+            c.drawPath(path, stroke)
+            stroke.pathEffect = null
+            val lz = pts[pts.size - 2]
+            val px2 = sx(lz)
+            val m = w * 0.014f
+            stroke.color = Color.argb(220, 120, 190, 255)
+            stroke.strokeWidth = w * 0.005f
+            c.drawCircle(px2, sideGround, m, stroke)
+            c.drawLine(px2, sideGround - m * 1.6f, px2, sideGround + m * 0.6f, stroke)
+            text.textAlign = Paint.Align.CENTER
+            text.textSize = w * 0.028f
+            text.color = Color.argb(230, 150, 205, 255)
+            outlinedText(c, "${lz.roundToInt()}m", px2, sideGround - m * 2.1f)
+        }
+
         val last = world.lastShot
         if (last != null) drawShotArc(c, last, true)
         for (b in world.boulders) if (b !== last && !b.landed) drawShotArc(c, b, false)
@@ -1314,24 +1341,27 @@ class GameView(context: Context, private val onExit: () -> Unit = {}) : View(con
 
     // ---------------------------------------------------------------- scoreboard
 
-    private fun loadScores(): List<Pair<Int, Int>> {
+    private class Run(val score: Int, val level: Int, val continued: Boolean)
+
+    /** Stored as "score:level:c" entries (c = 1 if a continue was used), newest first. */
+    private fun loadScores(): List<Run> {
         val raw = prefs.getString("scores", "") ?: ""
         return raw.split(',').mapNotNull {
             val p = it.split(':')
-            if (p.size == 2) {
-                val sc = p[0].toIntOrNull()
-                val lv = p[1].toIntOrNull()
-                if (sc != null && lv != null) sc to lv else null
-            } else null
+            val sc = p.getOrNull(0)?.toIntOrNull()
+            val lv = p.getOrNull(1)?.toIntOrNull()
+            if (sc != null && lv != null) Run(sc, lv, p.getOrNull(2) == "1") else null
         }
     }
 
+    private fun saveScores(list: List<Run>) {
+        prefs.edit().putString("scores", list.joinToString(",") { "${it.score}:${it.level}:${if (it.continued) 1 else 0}" }).apply()
+    }
+
     /** Keeps the last 20 runs, newest first. */
-    private fun recordScore(score: Int, level: Int) {
-        val list = (listOf(score to level) + loadScores()).take(20)
-        val ed = prefs.edit().putString("scores", list.joinToString(",") { "${it.first}:${it.second}" })
-        if (score >= best) ed.putInt("bestLevel", level)
-        ed.apply()
+    private fun recordScore(score: Int, level: Int, continued: Boolean) {
+        saveScores((listOf(Run(score, level, continued)) + loadScores()).take(20))
+        if (score > best) prefs.edit().putInt("bestLevel", level).putBoolean("bestContinued", continued).apply()
     }
 
     private fun drawScores(c: Canvas) {
@@ -1360,7 +1390,8 @@ class GameView(context: Context, private val onExit: () -> Unit = {}) : View(con
         if (bl > 0) {
             text.textSize = w * 0.035f
             text.color = khaki
-            c.drawText("reached level $bl", w / 2f, h * 0.258f, text)
+            val withC = if (prefs.getBoolean("bestContinued", false)) "  •  with a continue" else ""
+            c.drawText("reached level $bl$withC", w / 2f, h * 0.258f, text)
         }
 
         val list = loadScores()
@@ -1375,7 +1406,7 @@ class GameView(context: Context, private val onExit: () -> Unit = {}) : View(con
             c.drawText("No runs yet", w / 2f, y + rowH, text)
         }
         for ((i, e) in list.withIndex()) {
-            val isBest = e.first == best && best > 0
+            val isBest = e.score == best && best > 0
             if (i % 2 == 0) {
                 paint.color = 0x14FFFFFF
                 c.drawRect(w * 0.1f, y - rowH * 0.75f, w * 0.9f, y + rowH * 0.3f, paint)
@@ -1383,9 +1414,17 @@ class GameView(context: Context, private val onExit: () -> Unit = {}) : View(con
             text.color = if (isBest) amber else khaki
             text.textAlign = Paint.Align.LEFT
             c.drawText("${i + 1}.", w * 0.13f, y, text)
-            c.drawText("Lv ${e.second}", w * 0.28f, y, text)
+            c.drawText("Level ${e.level}", w * 0.21f, y, text)
+            if (e.continued) {
+                val ts = text.textSize
+                text.textSize = ts * 0.72f
+                text.color = Color.argb(200, 120, 190, 255)
+                c.drawText("CONTINUED", w * 0.45f, y, text)
+                text.textSize = ts
+                text.color = if (isBest) amber else khaki
+            }
             text.textAlign = Paint.Align.RIGHT
-            c.drawText("${e.first}" + if (isBest) "  ★" else "", w * 0.87f, y, text)
+            c.drawText("${e.score}" + if (isBest) "  ★" else "", w * 0.87f, y, text)
             y += rowH
         }
         text.textAlign = Paint.Align.CENTER

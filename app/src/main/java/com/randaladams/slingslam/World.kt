@@ -35,7 +35,7 @@ object K {
     const val SHIELD_PER_KILL = 6f
     const val MAX_SLING = 5
     const val HAZARDS_PER_LEVEL = 6
-    const val MISS_LIFE = 3f          // seconds a missed boulder stays once it has stopped rolling
+    const val MISS_LIFE = 1.5f         // seconds a missed boulder stays once it has stopped rolling
     const val MAX_ON_GROUND = 40
 }
 
@@ -150,6 +150,7 @@ class World(private val listener: WorldListener, seed: Long = System.nanoTime())
     companion object {
         /** Rolling resistance after a billiard knock: low, so a hard hit rolls a long way. */
         const val BILLIARD_FRICTION = 0.55f
+        const val LEVEL_REST = 3f        // seconds of calm between levels
         const val SPLIT_SPREAD = 9f      // sideways speed of the outer split rocks
         const val CHAIN_LEN = 3.6f       // how far apart the chained rocks can get
     }
@@ -188,6 +189,7 @@ class World(private val listener: WorldListener, seed: Long = System.nanoTime())
     var splitCharges = 0
     var splitArmed = false
     private val pending = ArrayList<Boulder>()
+    private var levelRest = false     // the next wave waits LEVEL_REST seconds
     var gameOver = false
     var banner: String? = null
     var bannerT = 0f
@@ -198,8 +200,8 @@ class World(private val listener: WorldListener, seed: Long = System.nanoTime())
     val spawnDelay get() = max(0.4f, 1.8f - 0.1f * (level - 1))
     val multiplier get() = 1 + streak / 5
     val waveSize get() = when {
-        level >= 12 -> 3
-        level >= 7 -> 2
+        level >= 10 -> 3
+        level >= 5 -> 2
         else -> 1
     }
     val boss: Hazard? get() = hazards.firstOrNull { it.kind == Kind.BOSS }
@@ -221,6 +223,25 @@ class World(private val listener: WorldListener, seed: Long = System.nanoTime())
     }
 
     fun flightTime(power: Float) = 2f * launchSpeed(power) * sin(launchAngle(power)) / K.G
+
+    /**
+     * The path a throw would take, as (z, y) pairs down-range, ending where it lands.
+     * Used to preview the shot in the side view while aiming.
+     */
+    fun predictPath(power: Float, aimRad: Float, steps: Int = 24): FloatArray {
+        val th = launchAngle(power)
+        val v = launchSpeed(power)
+        val vz = v * cos(th) * cos(aimRad)
+        val vy = v * sin(th)
+        val tLand = (vy + sqrt(vy * vy + 2f * K.G * K.LAUNCH_Y)) / K.G
+        val out = FloatArray((steps + 1) * 2)
+        for (i in 0..steps) {
+            val t = tLand * i / steps
+            out[i * 2] = vz * t
+            out[i * 2 + 1] = max(0f, K.LAUNCH_Y + vy * t - 0.5f * K.G * t * t)
+        }
+        return out
+    }
 
     fun throwBoulder(power: Float, aimRad: Float): Boolean {
         if (!loaded || gameOver) return false
@@ -292,6 +313,7 @@ class World(private val listener: WorldListener, seed: Long = System.nanoTime())
 
     /** Every 10th level opens with a boss; otherwise 1, 2 or 3 hazards come together. */
     private fun spawnWave() {
+        levelRest = false
         if (level % 10 == 0 && bossLevel != level) {
             bossLevel = level
             val shape = FloatArray(9) { 0.82f + rnd.nextFloat() * 0.22f }
@@ -479,9 +501,12 @@ class World(private val listener: WorldListener, seed: Long = System.nanoTime())
         if (newLevel > level) {
             level = newLevel
             showBanner(if (level % 10 == 9) "LEVEL $level — BOSS NEXT! KEEP THE FIELD CLEAR" else "LEVEL $level")
+            bannerT = LEVEL_REST
             if (level % 5 == 0) grantSplit()
+            levelRest = true
         }
-        spawnTimer = spawnDelay
+        // a short breather after each new level, otherwise the normal gap
+        spawnTimer = if (levelRest) LEVEL_REST else spawnDelay
         if (level % 10 == 0 && bossLevel != level) showBanner("LEVEL $level — BOSS INCOMING")
     }
 
