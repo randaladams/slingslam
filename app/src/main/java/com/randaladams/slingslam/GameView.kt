@@ -107,9 +107,7 @@ class GameView(context: Context, private val onExit: () -> Unit = {}) : View(con
 
     // ---- pre-painted scenery ----
     private var laneBmp: Bitmap? = null
-    private var sideBmp: Bitmap? = null
     private val laneDst = RectF()
-    private val sideDst = RectF()
 
     // ---- aiming: power comes from how far you drag from where you first touched ----
     private var aiming = false
@@ -270,13 +268,11 @@ class GameView(context: Context, private val onExit: () -> Unit = {}) : View(con
         dash = DashPathEffect(floatArrayOf(d * 1.6f, d), 0f)
 
         // Paint the scenery once, at half resolution, and scale it up with filtering.
-        val bd = Backdrop(w, h, sideBottom, adTop, horizonY, groundY, unitPx, persp)
+        // The battlefield is painted all the way up under the (see-through) side view.
+        val bd = Backdrop(w, h, sideTop, adTop, horizonY, groundY, unitPx, persp)
         val (lanePx, ls) = bd.paintLane(2)
         laneBmp = Bitmap.createBitmap(lanePx, ls[0], ls[1], Bitmap.Config.ARGB_8888)
-        laneDst.set(0f, sideBottom, w, sideBottom + ls[1] * 2f)
-        val (sidePx, ss) = bd.paintSide(sideTop, sideBottom, sideGround, 2)
-        sideBmp = Bitmap.createBitmap(sidePx, ss[0], ss[1], Bitmap.Config.ARGB_8888)
-        sideDst.set(0f, sideTop, w, sideTop + ss[1] * 2f)
+        laneDst.set(0f, sideTop, w, sideTop + ls[1] * 2f)
     }
 
     // ---- lane-view projection ----
@@ -453,7 +449,7 @@ class GameView(context: Context, private val onExit: () -> Unit = {}) : View(con
         if (sh > 0f) c.translate(sin(clock * 90f) * sh * w * 0.012f, cos(clock * 77f) * sh * w * 0.01f)
 
         c.save()
-        c.clipRect(0f, sideBottom, w, adTop)
+        c.clipRect(0f, sideTop, w, adTop)
         drawLane(c)
         drawSling(c)
         drawPile(c)
@@ -926,8 +922,14 @@ class GameView(context: Context, private val onExit: () -> Unit = {}) : View(con
     private fun drawSideView(c: Canvas) {
         c.save()
         c.clipRect(0f, sideTop, w, sideBottom)
-        val bmp = sideBmp
-        if (bmp != null) c.drawBitmap(bmp, null, sideDst, bmpPaint)
+        // see-through: a light tint over the battlefield, a little darker behind the ground line and labels
+        paint.shader = LinearGradient(0f, sideTop, 0f, sideGround, Color.argb(70, 10, 12, 16), Color.argb(25, 10, 12, 16), Shader.TileMode.CLAMP)
+        c.drawRect(0f, sideTop, w, sideGround, paint)
+        paint.shader = null
+        paint.color = Color.argb(110, 20, 16, 12)
+        c.drawRect(0f, sideGround, w, sideBottom, paint)
+        paint.color = Color.argb(150, 94, 139, 50)
+        c.drawRect(0f, sideGround - h * 0.0015f, w, sideGround + h * 0.0015f, paint)
 
         // range ticks
         text.textAlign = Paint.Align.CENTER
@@ -989,8 +991,8 @@ class GameView(context: Context, private val onExit: () -> Unit = {}) : View(con
         c.restore()
 
         paint.shader = null
-        paint.color = hudBg
-        c.drawRect(0f, sideBottom - h * 0.003f, w, sideBottom + h * 0.002f, paint)
+        paint.color = Color.argb(60, 230, 220, 194)
+        c.drawRect(0f, sideBottom - h * 0.001f, w, sideBottom + h * 0.001f, paint)
     }
 
     private fun drawShotArc(c: Canvas, b: Boulder, isLast: Boolean) {
@@ -1411,11 +1413,25 @@ class GameView(context: Context, private val onExit: () -> Unit = {}) : View(con
         text.textSize = w * 0.042f
         val lines = wrap(tutText(), w * 0.82f)
         val lineH = text.textSize * 1.3f
-        val top = sideBottom + h * 0.012f
-        val bottom = top + lines.size * lineH + h * 0.055f
+        // Sit just below the side view, unless a hazard would be hidden there; then sit just above the sandbags.
+        val panelH = lines.size * lineH + h * 0.055f
+        val upperTop = sideBottom + h * 0.012f
+        val lowerTop = groundY - h * 0.075f - panelH
+        fun covered(t: Float): Float {
+            var sum = 0f
+            for (hz in world.hazards) {
+                val sc = sAt(hz.z)
+                val hb = ly(hz.z, hz.y)
+                val ht = hb - hz.height * unitPx * sc * 1.2f
+                sum += max(0f, min(t + panelH, hb) - max(t, ht))
+            }
+            return sum
+        }
+        val top = if (tutStep == 1 || covered(upperTop) <= covered(lowerTop)) upperTop else lowerTop
+        val bottom = top + panelH
         rect.set(w * 0.04f, top, w * 0.96f, bottom)
         paint.shader = null
-        paint.color = 0xE6141618.toInt()
+        paint.color = 0xA6141618.toInt()
         c.drawRoundRect(rect, w * 0.03f, w * 0.03f, paint)
         stroke.color = amber
         stroke.strokeWidth = w * 0.004f
