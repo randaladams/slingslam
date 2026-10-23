@@ -84,7 +84,15 @@ class Sprites {
         val r = hz.radius * u
         when (hz.kind) {
             Kind.BARREL -> drum(c, hz, cx, bottom, r, side)
-            Kind.ROCK, Kind.BOSS -> rock(c, hz, cx, bottom - r * 0.9f, r)
+            Kind.ROCK -> rock(c, hz, cx, bottom - r * 0.9f, r)
+            Kind.BOSS -> {
+                golem(c, hz, cx, bottom, r)
+                if (hz.flash > 0f) {
+                    fill(Color.argb((hz.flash * 140).toInt(), 255, 240, 220))
+                    c.drawCircle(cx, bottom - r * 2f, r * 1.6f, paint)
+                }
+                return
+            }
             Kind.PLANT -> bramble(c, hz, cx, bottom, u)
             Kind.ENERGY -> shieldCell(c, hz, cx, bottom, r, clock)
             Kind.UPGRADE -> ammoCrate(c, cx, bottom, r)
@@ -150,6 +158,53 @@ class Sprites {
         stroke.strokeWidth = max(1f, r * 0.06f)
         rect.set(cx - hw, cy - r, cx + hw, cy + r)
         c.drawRoundRect(rect, r * 0.18f, r * 0.18f, stroke)
+    }
+
+    /** The boss: a golem built from boulders, with a rock torso, boulder limbs and glowing eyes. */
+    private fun golem(c: Canvas, hz: Hazard, cx: Float, bottom: Float, r: Float) {
+        val walk = if (hz.summoning) 0f else sin(hz.age * 3.2f)
+        val legR = r * 0.42f
+        // legs: thigh and foot on each side, stepping in turn
+        for (side in intArrayOf(-1, 1)) {
+            val lift = max(0f, walk * side) * r * 0.28f
+            val lx = cx + side * r * 0.48f
+            boulder(c, lx + side * r * 0.04f, bottom - r * 1.15f - lift * 0.5f, legR * 0.9f, side * 1.1f, 1f)
+            boulder(c, lx + side * r * 0.08f, bottom - legR - lift, legR, side * 2.3f, 1f)
+        }
+        // torso
+        val ty = bottom - r * 2.05f
+        rock(c, hz, cx, ty, r)
+        // arms: shoulder, elbow, fist
+        for (side in intArrayOf(-1, 1)) {
+            val sx = cx + side * r * 0.95f
+            val sy = ty - r * 0.35f
+            val ux: Float
+            val uy: Float
+            val fx: Float
+            val fy: Float
+            if (hz.summoning) {
+                val wob = sin(hz.age * 9f + side) * r * 0.08f
+                ux = sx + side * r * 0.35f; uy = sy - r * 0.55f + wob
+                fx = sx + side * r * 0.55f; fy = sy - r * 1.15f - wob
+            } else {
+                val swing = -walk * side * 0.45f
+                ux = sx + side * r * 0.22f + sin(swing) * r * 0.3f; uy = sy + r * 0.45f
+                fx = sx + side * r * 0.3f + sin(swing) * r * 0.65f; fy = sy + r * 1.05f
+            }
+            boulder(c, sx, sy, r * 0.34f, side * 0.7f, 1f)
+            boulder(c, ux, uy, r * 0.32f, side * 1.9f, 1f)
+            boulder(c, fx, fy, r * 0.42f, side * 2.8f, 1f)
+        }
+        // head with glowing eyes
+        val hy = ty - r * 1.2f
+        boulder(c, cx, hy, r * 0.44f, 0.4f, 1f)
+        val glow = if (hz.summoning) 1f else 0.7f + 0.3f * sin(hz.age * 4f)
+        fill(Color.argb((90 * glow).toInt(), 255, 120, 30))
+        c.drawCircle(cx - r * 0.16f, hy - r * 0.02f, r * 0.13f, paint)
+        c.drawCircle(cx + r * 0.16f, hy - r * 0.02f, r * 0.13f, paint)
+        fill(Color.argb((255 * glow).toInt(), 255, 170, 60))
+        c.drawCircle(cx - r * 0.16f, hy - r * 0.02f, r * 0.06f, paint)
+        c.drawCircle(cx + r * 0.16f, hy - r * 0.02f, r * 0.06f, paint)
     }
 
     private fun rock(c: Canvas, hz: Hazard, cx: Float, cy: Float, r: Float) {

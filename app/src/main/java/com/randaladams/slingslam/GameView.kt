@@ -40,7 +40,7 @@ import kotlin.math.sin
 @SuppressLint("ViewConstructor")
 class GameView(context: Context, private val onExit: () -> Unit = {}) : View(context), WorldListener {
 
-    private enum class Mode { TITLE, PLAYING, PAUSED, OVER }
+    private enum class Mode { TITLE, PLAYING, PAUSED, OVER, SCORES }
 
     private var mode = Mode.TITLE
     private var world = World(this)
@@ -92,6 +92,18 @@ class GameView(context: Context, private val onExit: () -> Unit = {}) : View(con
     private val levelUp = RectF()        // TESTING: remove before release
     private val btnA = RectF()           // menu buttons (resume / play again)
     private val btnB = RectF()           // menu buttons (end game / menu / exit)
+    private val btnC = RectF()           // menu buttons (scores)
+    private val skipBtn = RectF()
+    private var splitCx = 0f
+    private var splitCy = 0f
+    private var splitR = 1f
+    private var scoresFrom = Mode.TITLE
+
+    // ---- tutorial ----
+    private var tutStep = -1
+    private var tutBase = 0
+    private var tutSpawned = false
+    private var tutWait = 0f
 
     // ---- pre-painted scenery ----
     private var laneBmp: Bitmap? = null
@@ -148,6 +160,10 @@ class GameView(context: Context, private val onExit: () -> Unit = {}) : View(con
 
     /** Returns true if the back press was used (to pause). */
     fun handleBack(): Boolean {
+        if (mode == Mode.SCORES) {
+            mode = scoresFrom
+            return true
+        }
         if (mode == Mode.PLAYING) {
             mode = Mode.PAUSED
             aiming = false
@@ -157,6 +173,7 @@ class GameView(context: Context, private val onExit: () -> Unit = {}) : View(con
     }
 
     private fun startGame() {
+        tutStep = -1
         world = World(this)
         mode = Mode.PLAYING
         newBest = false
@@ -166,10 +183,16 @@ class GameView(context: Context, private val onExit: () -> Unit = {}) : View(con
     }
 
     private fun endGame() {
+        if (world.tutorial) {
+            tutStep = -1
+            mode = Mode.TITLE
+            return
+        }
         mode = Mode.OVER
         overT = 0f
         aiming = false
         shownScore = world.score
+        recordScore(world.score, world.level)
         if (world.score > best) {
             best = world.score
             newBest = true
@@ -212,7 +235,7 @@ class GameView(context: Context, private val onExit: () -> Unit = {}) : View(con
         hudTop = topInset
         hudH = h * 0.072f
         sideTop = hudTop + hudH
-        sideBottom = sideTop + h * 0.23f
+        sideBottom = sideTop + h * 0.207f
         sideGround = sideBottom - (sideBottom - sideTop) * 0.16f
         sidePadL = w * 0.09f
         sidePadR = w * 0.04f
@@ -228,6 +251,9 @@ class GameView(context: Context, private val onExit: () -> Unit = {}) : View(con
         maxPull = min(slingR * 2.1f, h - slingY - h * 0.01f)
         deadPull = slingR * 0.1f
         rockPx = slingR * 0.42f
+        splitR = slingR * 0.5f
+        splitCx = slingX - slingR * 2.4f
+        splitCy = slingY + slingR * 0.05f
         pileX = w * 0.86f
         pileY = slingY + slingR * 0.8f
         unitPx = (w * 0.47f) / K.LANE_HALF
@@ -278,6 +304,7 @@ class GameView(context: Context, private val onExit: () -> Unit = {}) : View(con
         when (mode) {
             Mode.PLAYING -> {
                 world.update(dt)
+                if (tutStep >= 0) tutorialTick(dt)
                 if (world.gameOver) endGame()
             }
             Mode.OVER -> {
@@ -308,13 +335,21 @@ class GameView(context: Context, private val onExit: () -> Unit = {}) : View(con
                 when (mode) {
                     Mode.TITLE -> if (e.actionMasked == MotionEvent.ACTION_DOWN) {
                         layoutMenu(Mode.TITLE)
-                        if (btnB.contains(x, y)) onExit() else startGame()
+                        when {
+                            btnB.contains(x, y) -> onExit()
+                            btnA.contains(x, y) -> startTutorial()
+                            btnC.contains(x, y) -> { scoresFrom = Mode.TITLE; mode = Mode.SCORES }
+                            !prefs.getBoolean("tutorialDone", false) -> startTutorial()
+                            else -> startGame()
+                        }
                     }
                     Mode.OVER -> if (overT > 0.9f && e.actionMasked == MotionEvent.ACTION_DOWN) {
                         layoutMenu(Mode.OVER)
                         if (btnA.contains(x, y)) startGame()
+                        else if (btnC.contains(x, y)) { scoresFrom = Mode.OVER; mode = Mode.SCORES }
                         else if (btnB.contains(x, y)) mode = Mode.TITLE
                     }
+                    Mode.SCORES -> if (e.actionMasked == MotionEvent.ACTION_DOWN) mode = scoresFrom
                     Mode.PAUSED -> if (e.actionMasked == MotionEvent.ACTION_DOWN) {
                         layoutMenu(Mode.PAUSED)
                         if (btnA.contains(x, y)) {
@@ -326,13 +361,23 @@ class GameView(context: Context, private val onExit: () -> Unit = {}) : View(con
                         }
                     }
                     Mode.PLAYING -> {
-                        if (inflate(levelDown).contains(x, y) && y < sideTop) {
+                        if (tutStep >= 0 && skipBtn.contains(x, y)) {
+                            finishTutorial()
+                        } else if (tutStep >= 0 && tutIsTapStep() && !inflate(pauseBtn).contains(x, y)) {
+                            if (e.actionMasked == MotionEvent.ACTION_DOWN) advanceTutorial()
+                        } else if (tutStep < 0 && inflate(levelDown).contains(x, y) && y < sideTop) {
                             world.debugSetLevel(world.level - 1)
-                        } else if (inflate(levelUp).contains(x, y) && y < sideTop) {
+                        } else if (tutStep < 0 && inflate(levelUp).contains(x, y) && y < sideTop) {
                             world.debugSetLevel(world.level + 1)
                         } else if (inflate(pauseBtn).contains(x, y)) {
                             mode = Mode.PAUSED
                             aiming = false
+                        } else if (hypot(x - splitCx, y - splitCy) < splitR * 1.35f) {
+                            if (world.toggleSplit()) {
+                                sfx.play(Sfx.PICKUP)
+                            } else {
+                                world.popups.add(Popup("no split shots — earn one every 5 levels", 0f, 6f, khaki))
+                            }
                         } else if (!aiming && hypot(x - slingX, y - slingY) < slingR * 1.8f) {
                             aiming = true
                             pointerId = e.getPointerId(i)
@@ -412,6 +457,7 @@ class GameView(context: Context, private val onExit: () -> Unit = {}) : View(con
         drawLane(c)
         drawSling(c)
         drawPile(c)
+        drawSplitButton(c)
         drawLaneHud(c)
         c.restore()
 
@@ -430,6 +476,8 @@ class GameView(context: Context, private val onExit: () -> Unit = {}) : View(con
 
         when (mode) {
             Mode.TITLE -> drawTitle(c)
+            Mode.SCORES -> drawScores(c)
+            Mode.PLAYING -> if (tutStep >= 0) drawTutorial(c)
             Mode.PAUSED -> drawPaused(c)
             Mode.OVER -> drawGameOver(c)
             else -> {}
@@ -506,7 +554,7 @@ class GameView(context: Context, private val onExit: () -> Unit = {}) : View(con
         }
         for (b in world.boulders) {
             val s = sAt(b.z)
-            val r = K.BOULDER_R * unitPx * s * (1f / (1f + b.y * 0.03f))
+            val r = b.r * unitPx * s * (1f / (1f + b.y * 0.03f))
             rect.set(lx(b.x, b.z) - r, ly(b.z) - r * 0.32f, lx(b.x, b.z) + r, ly(b.z) + r * 0.32f)
             c.drawOval(rect, paint)
         }
@@ -529,11 +577,17 @@ class GameView(context: Context, private val onExit: () -> Unit = {}) : View(con
                 is Hazard -> {
                     val s = sAt(it.z)
                     art.hazard(c, it, lx(it.x, it.z), ly(it.z, it.y), unitPx * s, false, clock)
-                    if (it.kind == Kind.BOSS) drawBossHealth(c, it, lx(it.x, it.z), ly(it.z, it.y) - it.radius * 1.85f * unitPx * s - unitPx * s, unitPx * s)
+                    if (it.kind == Kind.BOSS) drawBossHealth(c, it, lx(it.x, it.z), ly(it.z, it.y) - it.radius * 3.75f * unitPx * s - unitPx * s, unitPx * s)
                 }
                 is Boulder -> {
                     val s = sAt(it.z)
-                    val r = K.BOULDER_R * unitPx * s
+                    val r = it.r * unitPx * s
+                    if (it.split) {
+                        stroke.pathEffect = null
+                        stroke.color = Color.argb((160 + 90 * sin(clock * 12f)).toInt(), 242, 180, 81)
+                        stroke.strokeWidth = max(2f, r * 0.25f)
+                        c.drawCircle(lx(it.x, it.z), ly(it.z, it.y) - r, r * 1.35f, stroke)
+                    }
                     val a = if (it.landed) ((it.groundLife - it.rest) / 0.5f).coerceIn(0f, 1f) else 1f
                     art.boulder(c, lx(it.x, it.z), ly(it.z, it.y) - r, r, it.spin, a)
                 }
@@ -807,6 +861,12 @@ class GameView(context: Context, private val onExit: () -> Unit = {}) : View(con
             rect.set(bx - rockPx * 1.05f, by - rockPx * 0.2f, bx + rockPx * 1.05f, by + rockPx * 0.75f)
             c.drawOval(rect, paint)
             art.boulder(c, bx, by - rockPx * 0.1f, rockPx, 0.3f, 1f)
+            if (world.splitArmed) {
+                stroke.pathEffect = null
+                stroke.color = Color.argb((170 + 85 * sin(clock * 10f)).toInt(), 242, 180, 81)
+                stroke.strokeWidth = rockPx * 0.18f
+                c.drawCircle(bx, by - rockPx * 0.1f, rockPx * 1.35f, stroke)
+            }
         } else {
             c.drawLine(postL, postTop + postW * 0.5f, slingX, slingY + rockPx * 0.3f, stroke)
             c.drawLine(postR, postTop + postW * 0.5f, slingX, slingY + rockPx * 0.3f, stroke)
@@ -841,7 +901,7 @@ class GameView(context: Context, private val onExit: () -> Unit = {}) : View(con
 
     private fun drawLaneHud(c: Canvas) {
         val x0 = w * 0.04f
-        val y0 = slingY - slingR * 0.1f
+        val y0 = slingY + slingR * 0.95f
         text.textAlign = Paint.Align.LEFT
         text.textSize = w * 0.032f
         text.color = khaki
@@ -897,7 +957,7 @@ class GameView(context: Context, private val onExit: () -> Unit = {}) : View(con
 
         // hazard (drawn a bit larger than true scale so it reads at this size)
         for (hz in world.hazards) {
-            art.hazard(c, hz, sx(hz.z), sy(hz.y), sideScaleY * (if (hz.kind == Kind.BOSS) 1.1f else 1.5f), true, clock)
+            art.hazard(c, hz, sx(hz.z), sy(hz.y), sideScaleY * (if (hz.kind == Kind.BOSS) 0.75f else 1.5f), true, clock)
         }
 
         // the last shot's arc and where it came down
@@ -907,7 +967,7 @@ class GameView(context: Context, private val onExit: () -> Unit = {}) : View(con
 
         for (b in world.boulders) {
             if (b.landed && b.rest > b.groundLife - 0.4f) continue
-            val r = K.BOULDER_R * sideScaleY * 1.3f
+            val r = b.r * sideScaleY * 1.3f
             art.boulder(c, sx(b.z), sy(b.y) - r, r, b.spin, 1f)
         }
 
@@ -993,7 +1053,7 @@ class GameView(context: Context, private val onExit: () -> Unit = {}) : View(con
         text.color = amber
         c.drawText("LEVEL ${world.level}", w * 0.5f, rowY, text)
         // TESTING: level -/+ buttons (remove before release)
-        if (mode == Mode.PLAYING) {
+        if (mode == Mode.PLAYING && tutStep < 0) {
             for ((r, label) in listOf(levelDown to "−", levelUp to "+")) {
                 paint.shader = null
                 paint.color = 0x44E6DCC2
@@ -1080,25 +1140,20 @@ class GameView(context: Context, private val onExit: () -> Unit = {}) : View(con
         art.boulder(c, w * 0.82f, h * 0.17f + sin(clock * 2f) * h * 0.006f, w * 0.055f, clock * 0.3f, 1f)
 
         val lines = listOf(
-            "Touch the circle and pull back.",
-            "The farther you pull, the farther it flies.",
-            "Short pulls throw low and fast.",
-            "",
-            "Watch the SIDE VIEW up top to see",
-            "where each shot lands, then adjust.",
-            "",
-            "Smash oil drums, boulders and thorn",
-            "bramble before they reach your shield.",
+            "Pull back on the sling to lob boulders.",
+            "Smash what rolls in before it reaches",
+            "your shield. Watch the SIDE VIEW up top",
+            "to see where each shot lands.",
         )
         text.textSize = w * 0.04f
         text.color = Color.argb(230, 230, 220, 194)
-        var y = h * 0.44f
+        var y = h * 0.46f
         for (l in lines) {
             c.drawText(l, w / 2f, y, text)
             y += text.textSize * 1.35f
         }
         // bonus legend
-        val ly0 = y + h * 0.015f
+        val ly0 = y + h * 0.02f
         val u = w * 0.05f
         val items = listOf(Kind.ENERGY to "SHIELD", Kind.UPGRADE to "SLING UP", Kind.GOLD to "POINTS")
         text.textSize = w * 0.03f
@@ -1115,14 +1170,272 @@ class GameView(context: Context, private val onExit: () -> Unit = {}) : View(con
 
         text.textSize = w * 0.065f
         text.color = Color.argb((170 + 85 * sin(clock * 4f)).toInt(), 242, 180, 81)
-        outlinedText(c, "TAP TO START", w / 2f, h * 0.835f)
+        outlinedText(c, "TAP TO START", w / 2f, h * 0.775f)
         if (best > 0) {
             text.textSize = w * 0.04f
             text.color = khaki
-            c.drawText("BEST  $best", w / 2f, h * 0.865f, text)
+            c.drawText("HIGH SCORE  $best", w / 2f, h * 0.81f, text)
         }
         layoutMenu(Mode.TITLE)
+        drawButton(c, btnA, "HOW TO PLAY", false)
+        drawButton(c, btnC, "SCORES", false)
         drawButton(c, btnB, "EXIT", false)
+    }
+
+    // ---------------------------------------------------------------- scoreboard
+
+    private fun loadScores(): List<Pair<Int, Int>> {
+        val raw = prefs.getString("scores", "") ?: ""
+        return raw.split(',').mapNotNull {
+            val p = it.split(':')
+            if (p.size == 2) {
+                val sc = p[0].toIntOrNull()
+                val lv = p[1].toIntOrNull()
+                if (sc != null && lv != null) sc to lv else null
+            } else null
+        }
+    }
+
+    /** Keeps the last 20 runs, newest first. */
+    private fun recordScore(score: Int, level: Int) {
+        val list = (listOf(score to level) + loadScores()).take(20)
+        val ed = prefs.edit().putString("scores", list.joinToString(",") { "${it.first}:${it.second}" })
+        if (score >= best) ed.putInt("bestLevel", level)
+        ed.apply()
+    }
+
+    private fun drawScores(c: Canvas) {
+        dim(c, 235)
+        text.textAlign = Paint.Align.CENTER
+        text.textSize = w * 0.09f
+        text.color = khaki
+        outlinedText(c, "SCOREBOARD", w / 2f, h * 0.12f)
+
+        // featured high score
+        rect.set(w * 0.1f, h * 0.15f, w * 0.9f, h * 0.27f)
+        paint.shader = null
+        paint.color = 0xFF2A2418.toInt()
+        c.drawRoundRect(rect, h * 0.015f, h * 0.015f, paint)
+        stroke.pathEffect = null
+        stroke.color = amber
+        stroke.strokeWidth = w * 0.006f
+        c.drawRoundRect(rect, h * 0.015f, h * 0.015f, stroke)
+        text.textSize = w * 0.04f
+        text.color = amber
+        c.drawText("HIGH SCORE", w / 2f, h * 0.18f, text)
+        text.textSize = w * 0.1f
+        text.color = 0xFFF4EEDF.toInt()
+        c.drawText("$best", w / 2f, h * 0.232f, text)
+        val bl = prefs.getInt("bestLevel", 0)
+        if (bl > 0) {
+            text.textSize = w * 0.035f
+            text.color = khaki
+            c.drawText("reached level $bl", w / 2f, h * 0.258f, text)
+        }
+
+        val list = loadScores()
+        text.textSize = w * 0.035f
+        text.color = Color.argb(170, 230, 220, 194)
+        c.drawText("LAST ${list.size} RUNS (NEWEST FIRST)", w / 2f, h * 0.305f, text)
+        val rowH = h * 0.026f
+        var y = h * 0.34f
+        text.textSize = w * 0.04f
+        if (list.isEmpty()) {
+            text.color = khaki
+            c.drawText("No runs yet", w / 2f, y + rowH, text)
+        }
+        for ((i, e) in list.withIndex()) {
+            val isBest = e.first == best && best > 0
+            if (i % 2 == 0) {
+                paint.color = 0x14FFFFFF
+                c.drawRect(w * 0.1f, y - rowH * 0.75f, w * 0.9f, y + rowH * 0.3f, paint)
+            }
+            text.color = if (isBest) amber else khaki
+            text.textAlign = Paint.Align.LEFT
+            c.drawText("${i + 1}.", w * 0.13f, y, text)
+            c.drawText("Lv ${e.second}", w * 0.28f, y, text)
+            text.textAlign = Paint.Align.RIGHT
+            c.drawText("${e.first}" + if (isBest) "  ★" else "", w * 0.87f, y, text)
+            y += rowH
+        }
+        text.textAlign = Paint.Align.CENTER
+        text.textSize = w * 0.045f
+        text.color = Color.argb((170 + 85 * sin(clock * 4f)).toInt(), 242, 180, 81)
+        c.drawText("TAP TO GO BACK", w / 2f, h * 0.9f, text)
+    }
+
+    // ---------------------------------------------------------------- split button
+
+    private fun drawSplitButton(c: Canvas) {
+        val n = world.splitCharges
+        val armed = world.splitArmed
+        paint.shader = null
+        paint.color = when {
+            armed -> Color.argb((200 + 55 * sin(clock * 8f)).toInt(), 184, 134, 46)
+            n > 0 -> 0xCC2A2D30.toInt()
+            else -> 0x662A2D30
+        }
+        c.drawCircle(splitCx, splitCy, splitR, paint)
+        stroke.pathEffect = null
+        stroke.color = if (n > 0) amber else 0x55E6DCC2
+        stroke.strokeWidth = splitR * 0.08f
+        c.drawCircle(splitCx, splitCy, splitR, stroke)
+        // three rocks fanning out
+        val a = if (n > 0) 1f else 0.4f
+        val rr = splitR * 0.2f
+        art.boulder(c, splitCx, splitCy + splitR * 0.3f, rr * 1.2f, 0.3f, a)
+        for (k in intArrayOf(-1, 0, 1)) {
+            val ang = -PI.toFloat() / 2f + k * 0.7f
+            art.boulder(c, splitCx + cos(ang) * splitR * 0.5f, splitCy + splitR * 0.05f + sin(ang) * splitR * 0.5f, rr * 0.8f, k.toFloat(), a)
+        }
+        // charges badge
+        val bx = splitCx + splitR * 0.72f
+        val by = splitCy - splitR * 0.72f
+        paint.color = if (n > 0) amber else 0xFF555555.toInt()
+        c.drawCircle(bx, by, splitR * 0.3f, paint)
+        text.textAlign = Paint.Align.CENTER
+        text.textSize = splitR * 0.4f
+        text.color = 0xFF1A1408.toInt()
+        c.drawText("$n", bx, by + text.textSize * 0.36f, text)
+        text.textSize = splitR * 0.32f
+        text.color = if (n > 0) khaki else 0x88E6DCC2.toInt()
+        outlinedText(c, if (armed) "ARMED" else "SPLIT", splitCx, splitCy + splitR + text.textSize * 1.1f)
+    }
+
+    // ---------------------------------------------------------------- tutorial
+
+    private fun startTutorial() {
+        world = World(this).also { it.tutorial = true }
+        mode = Mode.PLAYING
+        shownScore = 0
+        aiming = false
+        lastNs = 0L
+        tutStep = 0
+        tutBase = 0
+        tutSpawned = false
+        tutWait = 0f
+    }
+
+    private fun finishTutorial() {
+        prefs.edit().putBoolean("tutorialDone", true).apply()
+        startGame()
+    }
+
+    private fun tutIsTapStep() = tutStep == 1 || tutStep == 6 || tutStep == 7
+
+    private fun advanceTutorial() {
+        tutStep++
+        tutSpawned = false
+        tutWait = 0.6f
+        tutBase = if (tutStep == 0) world.thrown else world.smashed
+        if (tutStep > 7) finishTutorial()
+    }
+
+    private fun tutText(): String = when (tutStep) {
+        0 -> "Touch inside the circle at the bottom, pull back, and let go to throw a boulder."
+        1 -> "The SIDE VIEW up top shows the arc of every shot. The ✕ marks where it landed. Tap to continue."
+        2 -> "An oil drum is rolling in. The farther you pull back, the farther you throw. Smash it!"
+        3 -> "Close ones need a short, gentle pull. Short throws fly low and fast."
+        4 -> "To aim RIGHT, pull down and to the LEFT. To aim left, pull to the right."
+        5 -> "Tap the SPLIT button, then hit a drum. The boulder bursts into 3 rocks that spread the damage."
+        6 -> "You earn a split shot every 5 levels (hold up to 3). Hit power cells for shield, ammo crates to upgrade your sling, and gold for points. Tap to continue."
+        else -> "Every 10th level a BOSS golem appears. Any stones left on the field get sucked into it and make it tougher, so keep your misses down! Tap to start."
+    }
+
+    private fun tutorialTick(dt: Float) {
+        val w0 = world
+        if (tutWait > 0f) {
+            tutWait -= dt
+            return
+        }
+        when (tutStep) {
+            0 -> if (w0.thrown > tutBase) advanceTutorial()
+            2, 3, 4, 5 -> {
+                if (!tutSpawned) {
+                    tutSpawned = true
+                    tutBase = w0.smashed
+                    when (tutStep) {
+                        2 -> w0.spawnTutorial(Kind.BARREL, 0f, 60f, 0.5f)
+                        3 -> w0.spawnTutorial(Kind.BARREL, -2f, 20f, 0.2f)
+                        4 -> w0.spawnTutorial(Kind.BARREL, 7f, 45f, 0.35f)
+                        5 -> {
+                            w0.splitCharges = max(w0.splitCharges, 1)
+                            w0.spawnTutorial(Kind.BARREL, -3f, 50f, 0.3f)
+                            w0.spawnTutorial(Kind.BARREL, 3f, 53f, 0.3f)
+                        }
+                    }
+                } else if (w0.hazards.isEmpty()) {
+                    if (w0.smashed > tutBase) {
+                        advanceTutorial()
+                    } else {
+                        // missed: try again
+                        tutSpawned = false
+                        tutWait = 1f
+                    }
+                }
+            }
+        }
+    }
+
+    private fun wrap(s: String, maxW: Float): List<String> {
+        val out = ArrayList<String>()
+        var line = ""
+        for (word in s.split(' ')) {
+            val t = if (line.isEmpty()) word else "$line $word"
+            if (text.measureText(t) > maxW && line.isNotEmpty()) {
+                out.add(line)
+                line = word
+            } else line = t
+        }
+        if (line.isNotEmpty()) out.add(line)
+        return out
+    }
+
+    private fun drawTutorial(c: Canvas) {
+        // highlight what the step is about
+        val pulse = 0.5f + 0.5f * sin(clock * 5f)
+        stroke.pathEffect = null
+        stroke.color = Color.argb((120 + 120 * pulse).toInt(), 242, 180, 81)
+        stroke.strokeWidth = w * 0.01f
+        when (tutStep) {
+            0, 2, 3, 4 -> c.drawCircle(slingX, slingY, slingR * (1.25f + 0.1f * pulse), stroke)
+            1 -> {
+                rect.set(w * 0.01f, sideTop + h * 0.004f, w * 0.99f, sideBottom - h * 0.004f)
+                c.drawRoundRect(rect, w * 0.02f, w * 0.02f, stroke)
+            }
+            5 -> c.drawCircle(splitCx, splitCy, splitR * (1.3f + 0.15f * pulse), stroke)
+        }
+
+        // instruction panel just below the side view
+        text.textAlign = Paint.Align.CENTER
+        text.textSize = w * 0.042f
+        val lines = wrap(tutText(), w * 0.82f)
+        val lineH = text.textSize * 1.3f
+        val top = sideBottom + h * 0.012f
+        val bottom = top + lines.size * lineH + h * 0.055f
+        rect.set(w * 0.04f, top, w * 0.96f, bottom)
+        paint.shader = null
+        paint.color = 0xE6141618.toInt()
+        c.drawRoundRect(rect, w * 0.03f, w * 0.03f, paint)
+        stroke.color = amber
+        stroke.strokeWidth = w * 0.004f
+        c.drawRoundRect(rect, w * 0.03f, w * 0.03f, stroke)
+        text.color = 0xFFF4EEDF.toInt()
+        var y = top + h * 0.012f + text.textSize
+        for (l in lines) {
+            c.drawText(l, w / 2f, y, text)
+            y += lineH
+        }
+        // footer: step count and skip
+        text.textSize = w * 0.032f
+        text.textAlign = Paint.Align.LEFT
+        text.color = Color.argb(170, 230, 220, 194)
+        c.drawText("TUTORIAL  ${tutStep + 1} / 8", w * 0.08f, bottom - h * 0.014f, text)
+        text.textAlign = Paint.Align.RIGHT
+        text.color = amber
+        c.drawText("SKIP ›", w * 0.92f, bottom - h * 0.014f, text)
+        skipBtn.set(w * 0.68f, bottom - h * 0.045f, w * 0.96f, bottom + h * 0.01f)
+        text.textAlign = Paint.Align.CENTER
     }
 
     private fun drawPaused(c: Canvas) {
@@ -1142,17 +1455,22 @@ class GameView(context: Context, private val onExit: () -> Unit = {}) : View(con
         val bh = h * 0.062f
         when (m) {
             Mode.TITLE -> {
-                btnA.set(0f, 0f, 0f, 0f)
-                val ew = w * 0.32f
-                btnB.set(w / 2f - ew / 2f, h * 0.88f, w / 2f + ew / 2f, h * 0.88f + bh * 0.75f)
+                val ew = w * 0.29f
+                val gap = w * 0.03f
+                val y0 = h * 0.835f
+                val y1 = y0 + bh * 0.8f
+                btnA.set(w / 2f - ew * 1.5f - gap, y0, w / 2f - ew * 0.5f - gap, y1)
+                btnC.set(w / 2f - ew * 0.5f, y0, w / 2f + ew * 0.5f, y1)
+                btnB.set(w / 2f + ew * 0.5f + gap, y0, w / 2f + ew * 1.5f + gap, y1)
             }
             Mode.PAUSED -> {
                 btnA.set(w / 2f - bw / 2f, h * 0.46f, w / 2f + bw / 2f, h * 0.46f + bh)
                 btnB.set(w / 2f - bw / 2f, h * 0.55f, w / 2f + bw / 2f, h * 0.55f + bh)
             }
             else -> {
-                btnA.set(w / 2f - bw / 2f, h * 0.69f, w / 2f + bw / 2f, h * 0.69f + bh)
-                btnB.set(w / 2f - bw / 2f, h * 0.78f, w / 2f + bw / 2f, h * 0.78f + bh)
+                btnA.set(w / 2f - bw / 2f, h * 0.67f, w / 2f + bw / 2f, h * 0.67f + bh)
+                btnC.set(w / 2f - bw / 2f, h * 0.75f, w / 2f + bw / 2f, h * 0.75f + bh)
+                btnB.set(w / 2f - bw / 2f, h * 0.83f, w / 2f + bw / 2f, h * 0.83f + bh)
             }
         }
     }
@@ -1167,6 +1485,8 @@ class GameView(context: Context, private val onExit: () -> Unit = {}) : View(con
         c.drawRoundRect(r, r.height() * 0.18f, r.height() * 0.18f, stroke)
         text.textAlign = Paint.Align.CENTER
         text.textSize = r.height() * 0.42f
+        val tw = text.measureText(label)
+        if (tw > r.width() * 0.88f) text.textSize *= r.width() * 0.88f / tw
         text.color = if (primary) 0xFF1A1408.toInt() else khaki
         c.drawText(label, r.centerX(), r.centerY() + text.textSize * 0.36f, text)
     }
@@ -1188,7 +1508,7 @@ class GameView(context: Context, private val onExit: () -> Unit = {}) : View(con
             text.color = Color.argb(200, 230, 220, 194)
             c.drawText("Best  $best", w / 2f, h * 0.51f, text)
         }
-        val acc = if (world.thrown > 0) 100 * world.hits / world.thrown else 0
+        val acc = if (world.thrown > 0) min(100, 100 * world.hits / world.thrown) else 0
         text.textSize = w * 0.045f
         text.color = Color.argb(220, 230, 220, 194)
         c.drawText("Level ${world.level}   •   Smashed ${world.smashed}", w / 2f, h * 0.58f, text)
@@ -1196,6 +1516,7 @@ class GameView(context: Context, private val onExit: () -> Unit = {}) : View(con
         if (overT > 0.9f) {
             layoutMenu(Mode.OVER)
             drawButton(c, btnA, "PLAY AGAIN", true)
+            drawButton(c, btnC, "SCOREBOARD", false)
             drawButton(c, btnB, "MENU", false)
         }
     }

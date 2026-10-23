@@ -53,7 +53,7 @@ enum class Kind(
     ENERGY(true, 2.0f, 4.0f, 0f, 50, 1),
     UPGRADE(true, 2.0f, 4.0f, 0f, 100, 1),
     GOLD(true, 2.0f, 4.0f, 0f, 500, 1),
-    BOSS(false, 4.0f, 6.4f, 40f, 2000, 5),
+    BOSS(false, 4.0f, 12.8f, 40f, 2000, 3),
 }
 
 class Hazard(val kind: Kind, x: Float, var z: Float, var speed: Float, val shape: FloatArray) {
@@ -62,6 +62,8 @@ class Hazard(val kind: Kind, x: Float, var z: Float, var speed: Float, val shape
     var y = 0f
     var hp = kind.hp
     var maxHp = kind.hp
+    var summoning = false         // boss: arms raised, pulling stones in
+    var fed = 0                   // boss: stones absorbed
     var radius = kind.radius      // the boss grows, so size lives on the hazard
     var height = kind.height
     var age = 0f
@@ -95,6 +97,9 @@ class Boulder(
     /** Seconds it lies on the ground: misses linger, boulders that hit something fade once stopped. */
     val groundLife get() = if (missed) K.MISS_LIFE else life
     val struck = HashSet<Hazard>()        // hazards this boulder already hit (no double hits)
+    var r = K.BOULDER_R                   // fragments are smaller
+    var split = false                     // split shot: bursts into 3 rocks when it hits something
+    var fragment = false
 }
 
 class Particle(
@@ -174,6 +179,10 @@ class World(private val listener: WorldListener, seed: Long = System.nanoTime())
 
     var shake = 0f
     var hurtFlash = 0f
+    var tutorial = false              // practice mode: no auto spawns, no damage, no levels
+    var splitCharges = 0
+    var splitArmed = false
+    private val pending = ArrayList<Boulder>()
     var gameOver = false
     var banner: String? = null
     var bannerT = 0f
@@ -215,6 +224,11 @@ class World(private val listener: WorldListener, seed: Long = System.nanoTime())
         val h = v * cos(th)
         val b = Boulder(0f, K.LAUNCH_Y, 0f, h * sin(aimRad), v * sin(th), h * cos(aimRad))
         b.trail.add(floatArrayOf(b.x, b.y, b.z))
+        if (splitArmed && splitCharges > 0) {
+            b.split = true
+            splitCharges--
+        }
+        splitArmed = false
         // Boulders roll a little at first and farther as the sling is upgraded.
         val lv = (slingLevel - 1).toFloat() / (K.MAX_SLING - 1)
         b.rolls = slingLevel >= K.MAX_SLING
@@ -259,7 +273,7 @@ class World(private val listener: WorldListener, seed: Long = System.nanoTime())
             }
         }
 
-        if (hazards.isEmpty()) {
+        if (hazards.isEmpty() && !tutorial) {
             spawnTimer -= dt
             if (spawnTimer <= 0f) spawnWave()
         } else {
@@ -284,7 +298,7 @@ class World(private val listener: WorldListener, seed: Long = System.nanoTime())
             // every stone left on the field gets sucked into it, one after another
             var k = 0
             for (b in boulders) {
-                if (b.landed && !b.gone && !b.pulled) {
+                if (b.landed && !b.gone && !b.pulled && !b.fragment) {
                     startPull(b, 0.8f + k * 0.18f)
                     k++
                 }
@@ -346,17 +360,15 @@ class World(private val listener: WorldListener, seed: Long = System.nanoTime())
                 .coerceIn(-K.LANE_HALF + 2f, K.LANE_HALF - 2f)
             Kind.BOSS -> {
                 h.y = abs(sin(h.age * 3f)) * 0.3f
-                if (boulders.any { it.pulled }) {
+                h.summoning = boulders.any { it.pulled }
+                if (h.summoning) {
                     // summoning: holds still, the ground rumbles, dust swirls around it
                     h.z += h.speed * dt
                     shake = max(shake, 0.3f)
-                    h.spin += dt * 1.5f
                     if (rnd.nextFloat() < dt * 25f) {
                         val a = rnd.nextFloat() * 2f * PI.toFloat()
                         smoke(h.x + cos(a) * h.radius * 1.3f, 0.5f, h.z + sin(a) * h.radius * 0.6f, 1, 0xFF8D7B68.toInt(), 2.5f)
                     }
-                } else {
-                    h.spin += dt * h.speed / h.radius
                 }
             }
             else -> {
@@ -383,8 +395,9 @@ class World(private val listener: WorldListener, seed: Long = System.nanoTime())
     /** A boulder sucked into the boss makes it bigger and tougher. */
     private fun growBoss(h: Hazard) {
         h.radius = min(9f, h.radius + 0.35f)
-        h.height = h.radius * 1.6f
-        h.hp = min(25, h.hp + 1)
+        h.height = h.radius * 3.2f
+        h.fed++
+        if (h.fed % 2 == 0) h.hp = min(15, h.hp + 1)
         h.maxHp = max(h.maxHp, h.hp)
         h.flash = 0.6f
         shake = max(shake, 0.25f)
@@ -395,7 +408,9 @@ class World(private val listener: WorldListener, seed: Long = System.nanoTime())
 
     /** Testing aid: jump straight to a level. */
     fun debugSetLevel(n: Int) {
+        val old = level
         level = n.coerceIn(1, 99)
+        for (lv in old + 1..level) if (lv % 5 == 0) grantSplit()
         resolved = (level - 1) * K.HAZARDS_PER_LEVEL
         bossLevel = 0
         hazards.clear()
@@ -403,8 +418,32 @@ class World(private val listener: WorldListener, seed: Long = System.nanoTime())
         showBanner("LEVEL $level")
     }
 
+    /** One split shot every 5 levels, holding at most 3. */
+    private fun grantSplit() {
+        if (splitCharges < 3) {
+            splitCharges++
+            popups.add(Popup("SPLIT SHOT EARNED!", 0f, 30f, 0xFFF2B451.toInt(), big = true))
+            listener.onSound(Sfx.UPGRADE)
+        }
+    }
+
+    /** Tap the split button: arms (or disarms) the boulder in the sling. */
+    fun toggleSplit(): Boolean {
+        if (splitCharges <= 0) return false
+        splitArmed = !splitArmed
+        return true
+    }
+
+    fun spawnTutorial(kind: Kind, x: Float, z: Float, speedMul: Float) {
+        hazards.add(Hazard(kind, x, z, 5.5f * speedMul, FloatArray(9) { 0.82f + rnd.nextFloat() * 0.22f }))
+    }
+
     private fun reached(h: Hazard) {
         hazards.remove(h)
+        if (tutorial) {
+            popups.add(Popup("missed — try again", h.x, 3f, 0xFFE6DCC2.toInt(), big = true))
+            return
+        }
         resolveOne()
         if (h.kind.good) {
             popups.add(Popup("missed", h.x, 3f, 0xFFB0B0B0.toInt()))
@@ -428,11 +467,13 @@ class World(private val listener: WorldListener, seed: Long = System.nanoTime())
     }
 
     private fun resolveOne() {
+        if (tutorial) return
         resolved++
         val newLevel = 1 + resolved / K.HAZARDS_PER_LEVEL
         if (newLevel > level) {
             level = newLevel
             showBanner(if (level % 10 == 9) "LEVEL $level — BOSS NEXT! KEEP THE FIELD CLEAR" else "LEVEL $level")
+            if (level % 5 == 0) grantSplit()
         }
         spawnTimer = spawnDelay
         if (level % 10 == 0 && bossLevel != level) showBanner("LEVEL $level — BOSS INCOMING")
@@ -446,13 +487,13 @@ class World(private val listener: WorldListener, seed: Long = System.nanoTime())
     /** Boulders on the ground knock each other around like billiard balls. */
     private fun collideBoulders() {
         val n = boulders.size
-        val minD = K.BOULDER_R * 2f
         for (i in 0 until n) {
             val a = boulders[i]
             if (!a.landed || a.pulled || a.gone) continue
             for (j in i + 1 until n) {
                 val b = boulders[j]
                 if (!b.landed || b.pulled || b.gone) continue
+                val minD = a.r + b.r
                 val dx = b.x - a.x
                 val dz = b.z - a.z
                 if (abs(dx) > minD || abs(dz) > minD) continue
@@ -492,7 +533,40 @@ class World(private val listener: WorldListener, seed: Long = System.nanoTime())
         }
     }
 
+    /** Hit areas a little larger than the drawings so edge hits count. */
+    private fun hitR(h: Hazard) = h.radius * 1.2f
+    private fun hitH(h: Hazard) = h.height * 1.5f
+
+    /** A split shot bursts into three smaller rocks that fan out and can hit other hazards. */
+    private fun onHit(b: Boulder, h: Hazard) {
+        if (!b.split) return
+        b.split = false
+        var fx = b.vx
+        var fz = b.vz
+        val len = hypot(fx, fz)
+        if (len < 0.1f) { fx = 0f; fz = 1f } else { fx /= len; fz /= len }
+        for (k in -1..1) {
+            val a = k * 0.75f
+            val dx = fx * cos(a) - fz * sin(a)
+            val dz = fx * sin(a) + fz * cos(a)
+            val f = Boulder(b.x, max(b.y, 1f), b.z, dx * 15f, 13f, dz * 15f)
+            f.r = K.BOULDER_R * 0.6f
+            f.fragment = true
+            f.life = 1.0f
+            f.rollKeep = 0.4f
+            f.friction = 3f
+            f.struck.add(h)
+            pending.add(f)
+        }
+        burst(b.x, max(b.y, 1f), b.z, 0xFFF2B451.toInt(), 14, 16f)
+        listener.onSound(Sfx.BREAK)
+    }
+
     private fun updateBoulders(dt: Float) {
+        if (pending.isNotEmpty()) {
+            boulders.addAll(pending)
+            pending.clear()
+        }
         collideBoulders()
         // keep the field from filling up: oldest misses go first
         var onGround = boulders.count { it.landed && !it.pulled }
@@ -550,11 +624,12 @@ class World(private val listener: WorldListener, seed: Long = System.nanoTime())
                         if (i >= hazards.size) continue
                         val h = hazards[i]
                         if (b.struck.contains(h)) continue
-                        if (hypot(b.x - h.x, b.z - h.z) < h.radius + K.BOULDER_R) {
+                        if (hypot(b.x - h.x, b.z - h.z) < hitR(h) + b.r) {
                             b.struck.add(h)
                             b.hit = true
                             b.vx *= 0.6f; b.vz *= 0.6f
                             marks.add(Mark(b.x, b.z, true))
+                            onHit(b, h)
                             strike(h)
                         }
                     }
@@ -582,7 +657,7 @@ class World(private val listener: WorldListener, seed: Long = System.nanoTime())
             for (h in hazards) {
                 if (b.struck.contains(h)) continue
                 val d = hypot(b.x - h.x, b.z - h.z)
-                if (d < h.radius + K.BOULDER_R && b.y < h.y + h.height + K.BOULDER_R * 0.5f) {
+                if (d < hitR(h) + b.r && b.y < h.y + hitH(h) + b.r * 0.5f) {
                     direct = h
                     break
                 }
@@ -602,6 +677,7 @@ class World(private val listener: WorldListener, seed: Long = System.nanoTime())
                 } else {
                     b.gone = true
                 }
+                onHit(b, direct)
                 strike(direct)
                 continue
             }
@@ -636,10 +712,11 @@ class World(private val listener: WorldListener, seed: Long = System.nanoTime())
                     if (i >= hazards.size) continue
                     val h = hazards[i]
                     if (b.struck.contains(h)) continue
-                    if (hypot(b.x - h.x, b.z - h.z) < h.radius + K.BOULDER_R * 0.7f + splash) {
+                    if (hypot(b.x - h.x, b.z - h.z) < hitR(h) + b.r * 0.7f + splash) {
                         struckAny = true
                         b.hit = true
                         b.struck.add(h)
+                        onHit(b, h)
                         strike(h)
                     }
                 }
