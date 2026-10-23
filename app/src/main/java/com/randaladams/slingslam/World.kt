@@ -62,6 +62,7 @@ class Hazard(val kind: Kind, x: Float, var z: Float, var speed: Float, val shape
     var y = 0f
     var hp = kind.hp
     var maxHp = kind.hp
+    var phase = 0f                // boss: side-to-side sway
     var summoning = false         // boss: arms raised, pulling stones in
     var fed = 0                   // boss: stones absorbed
     var radius = kind.radius      // the boss grows, so size lives on the hazard
@@ -150,7 +151,8 @@ class World(private val listener: WorldListener, seed: Long = System.nanoTime())
     companion object {
         /** Rolling resistance after a billiard knock: low, so a hard hit rolls a long way. */
         const val BILLIARD_FRICTION = 0.55f
-        const val LEVEL_REST = 3f        // seconds of calm between levels
+        const val LEVEL_REST = 6f        // seconds of calm between levels (complete banner, then get ready)
+        const val GET_READY = 3f         // last part of the rest shows a get-ready countdown
         const val BOSS_DELAY = 2.5f      // pause after the final wave before the boss appears
         const val SPLIT_SPREAD = 9f      // sideways speed of the outer split rocks
         const val CHAIN_LEN = 3.6f       // how far apart the chained rocks can get
@@ -171,7 +173,7 @@ class World(private val listener: WorldListener, seed: Long = System.nanoTime())
     var time = 0f
 
     val hazards = ArrayList<Hazard>()
-    var spawnTimer = 1.6f
+    var spawnTimer = GET_READY
     var wave = 0                      // regular waves sent so far in this level
     var bossSpawned = false           // this level's boss has appeared
     val boulders = ArrayList<Boulder>()
@@ -188,10 +190,11 @@ class World(private val listener: WorldListener, seed: Long = System.nanoTime())
     var tutorial = false
     var continued = false
     var quit = false                  // ended from the pause menu (no continue offer)             // used the watch-an-ad continue this run              // practice mode: no auto spawns, no damage, no levels
-    var splitCharges = 0
+    var splitCharges = 1              // every run starts with one
     var splitArmed = false
     private val pending = ArrayList<Boulder>()
-    private var levelRest = false     // the next wave waits LEVEL_REST seconds
+    var levelRest = true              // waiting before a level starts (true at the start of a run)
+        private set
     var gameOver = false
     var banner: String? = null
     var bannerT = 0f
@@ -403,6 +406,12 @@ class World(private val listener: WorldListener, seed: Long = System.nanoTime())
                         val a = rnd.nextFloat() * 2f * PI.toFloat()
                         smoke(h.x + cos(a) * h.radius * 1.3f, 0.5f, h.z + sin(a) * h.radius * 0.6f, 1, 0xFF8D7B68.toInt(), 2.5f)
                     }
+                } else if (level >= 2) {
+                    // from the second boss on it sways side to side, faster and wider each level
+                    val amp = min(K.LANE_HALF - h.radius - 1f, 4f + 0.8f * (level - 2))
+                    val lateral = min(9f, 1.5f + 1.1f * (level - 2))   // peak sideways speed
+                    h.phase += dt * lateral / max(1f, amp)
+                    h.x = (h.baseX + amp * sin(h.phase)).coerceIn(-K.LANE_HALF + h.radius, K.LANE_HALF - h.radius)
                 }
             }
             else -> {
@@ -478,8 +487,8 @@ class World(private val listener: WorldListener, seed: Long = System.nanoTime())
             popups.add(Popup("+$bonus", 0f, 30f, 0xFFF2B451.toInt(), big = true, value = bonus))
             grantSplit()
         }
-        showBanner(if (beaten) "LEVEL $done COMPLETE!" else "LEVEL $level")
-        bannerT = LEVEL_REST
+        showBanner(if (beaten) "LEVEL $done COMPLETE!" else "THE BOSS GOT THROUGH")
+        bannerT = LEVEL_REST - GET_READY
     }
 
     /** One split shot for each boss beaten, holding at most 3. */

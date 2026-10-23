@@ -769,6 +769,24 @@ class GameView(context: Context, private val onExit: () -> Unit = {}) : View(con
             text.alpha = 255
         }
 
+        // get ready for the next level, with a countdown
+        if (world.levelRest && !world.tutorial && world.spawnTimer <= World.GET_READY && world.hazards.isEmpty()) {
+            val t = world.spawnTimer
+            val cy = horizonY + (groundY - horizonY) * 0.32f
+            val n = kotlin.math.ceil(t).toInt().coerceAtLeast(1)
+            val pop = 1f + 0.25f * (t - kotlin.math.floor(t))
+            text.textAlign = Paint.Align.CENTER
+            text.textSize = w * 0.055f
+            text.color = khaki
+            outlinedText(c, "GET READY FOR", w / 2f, cy - w * 0.1f)
+            text.textSize = w * 0.11f
+            text.color = amber
+            outlinedText(c, "LEVEL ${world.level}", w / 2f, cy + w * 0.02f)
+            text.textSize = w * 0.12f * pop
+            text.color = 0xFFF4EEDF.toInt()
+            outlinedText(c, "$n", w / 2f, cy + w * 0.2f)
+        }
+
         // banner
         val bn = world.banner
         if (bn != null && world.bannerT > 0f) {
