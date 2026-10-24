@@ -1,4 +1,4 @@
-package com.randaladams.slingslam
+package com.adamselite.slingslam
 
 import kotlin.math.PI
 import kotlin.math.abs

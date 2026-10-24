@@ -7,3 +7,6 @@ local.properties
 .DS_Store
 captures/
 .cxx/
+*.jks
+*.keystore
+keystore.base64.txt

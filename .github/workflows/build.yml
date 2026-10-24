@@ -22,16 +22,35 @@ jobs:
 
       - uses: gradle/actions/setup-gradle@v6
 
-      - name: Build
+      - name: Write signing key
+        if: github.event_name != 'pull_request'
+        env:
+          SIGNING_KEYSTORE_BASE64: ${{ secrets.SIGNING_KEYSTORE_BASE64 }}
+        run: |
+          if [ -z "$SIGNING_KEYSTORE_BASE64" ]; then
+            echo "::error::Signing secrets are missing. Add SIGNING_KEYSTORE_BASE64, SIGNING_STORE_PASSWORD, SIGNING_KEY_ALIAS and SIGNING_KEY_PASSWORD in Settings > Secrets and variables > Actions."
+            exit 1
+          fi
+          echo "$SIGNING_KEYSTORE_BASE64" | base64 -d > app/release.jks
+
+      - name: Build APK and App Bundle
+        env:
+          SIGNING_STORE_PASSWORD: ${{ secrets.SIGNING_STORE_PASSWORD }}
+          SIGNING_KEY_ALIAS: ${{ secrets.SIGNING_KEY_ALIAS }}
+          SIGNING_KEY_PASSWORD: ${{ secrets.SIGNING_KEY_PASSWORD }}
         run: |
           chmod +x gradlew
-          ./gradlew assembleRelease --stacktrace
+          ./gradlew assembleRelease bundleRelease --stacktrace
           cp app/build/outputs/apk/release/app-release.apk SlingSlam.apk
+          cp app/build/outputs/bundle/release/app-release.aab SlingSlam.aab
+          rm -f app/release.jks
 
       - uses: actions/upload-artifact@v7
         with:
-          name: SlingSlam-apk
-          path: SlingSlam.apk
+          name: SlingSlam
+          path: |
+            SlingSlam.apk
+            SlingSlam.aab
 
       - name: Publish to the "latest" release
         if: github.event_name == 'push' && github.ref == 'refs/heads/main'
@@ -39,7 +58,9 @@ jobs:
         with:
           tag_name: latest
           name: Sling Slam (latest build)
-          body: "Build #${{ github.run_number }} from ${{ github.sha }}. Download SlingSlam.apk on your phone and open it to install."
+          body: "Build #${{ github.run_number }} from ${{ github.sha }}. Download SlingSlam.apk on your phone and open it to install. SlingSlam.aab is the bundle to upload to Google Play."
           prerelease: false
           make_latest: true
-          files: SlingSlam.apk
+          files: |
+            SlingSlam.apk
+            SlingSlam.aab

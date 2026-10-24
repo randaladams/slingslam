@@ -7,32 +7,37 @@ plugins {
 val buildNumber = (System.getenv("GITHUB_RUN_NUMBER") ?: "1").toInt()
 
 android {
-    namespace = "com.randaladams.slingslam"
+    namespace = "com.adamselite.slingslam"
     compileSdk = 35
 
     defaultConfig {
-        applicationId = "com.randaladams.slingslam"
+        applicationId = "com.adamselite.slingslam"
         minSdk = 26
         targetSdk = 35
         versionCode = buildNumber
         versionName = "1.0.$buildNumber"
     }
 
-    // A fixed key checked into the repo so phone updates install over each other.
-    // Fine for sideloading; make a private key before publishing to the Play Store.
+    // Release signing uses the private upload key. CI writes it from the repository secrets
+    // (SIGNING_KEYSTORE_BASE64 etc.) to app/release.jks; it is never committed.
+    // Without those variables (a local build) the release falls back to the standard debug key.
+    val ksFile = file("release.jks")
+    val hasReleaseKey = ksFile.exists() && System.getenv("SIGNING_STORE_PASSWORD") != null
     signingConfigs {
-        getByName("debug") {
-            storeFile = file("debug.keystore")
-            storePassword = "android"
-            keyAlias = "androiddebugkey"
-            keyPassword = "android"
+        create("release") {
+            if (hasReleaseKey) {
+                storeFile = ksFile
+                storePassword = System.getenv("SIGNING_STORE_PASSWORD")
+                keyAlias = System.getenv("SIGNING_KEY_ALIAS")
+                keyPassword = System.getenv("SIGNING_KEY_PASSWORD")
+            }
         }
     }
 
     buildTypes {
         release {
             isMinifyEnabled = false
-            signingConfig = signingConfigs.getByName("debug")
+            signingConfig = if (hasReleaseKey) signingConfigs.getByName("release") else signingConfigs.getByName("debug")
         }
     }
 

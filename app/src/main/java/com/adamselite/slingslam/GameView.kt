@@ -1,4 +1,4 @@
-package com.randaladams.slingslam
+package com.adamselite.slingslam
 
 import android.annotation.SuppressLint
 import android.content.Context

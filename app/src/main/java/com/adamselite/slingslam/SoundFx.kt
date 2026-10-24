@@ -1,4 +1,4 @@
-package com.randaladams.slingslam
+package com.adamselite.slingslam
 
 import android.content.Context
 import android.media.AudioAttributes

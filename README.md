@@ -57,5 +57,17 @@ The APK lands in `app/build/outputs/apk/release/`.
 - `SoundFx.kt` — sound effects (`res/raw/*.wav`), master volume
 - `MainActivity.kt` — full-screen host activity
 
-The repo includes a throwaway signing key (`app/debug.keystore`) so updates install over each other.
-Make your own private key before publishing to the Play Store.
+## Signing
+
+Release builds are signed with a private upload key that is never committed. GitHub Actions reads it
+from four repository secrets (Settings > Secrets and variables > Actions):
+
+| Secret | Value |
+|---|---|
+| `SIGNING_KEYSTORE_BASE64` | the keystore file, base64-encoded |
+| `SIGNING_STORE_PASSWORD` | keystore password |
+| `SIGNING_KEY_ALIAS` | key alias |
+| `SIGNING_KEY_PASSWORD` | key password |
+
+Each build publishes `SlingSlam.apk` (to install directly) and `SlingSlam.aab` (to upload to Google Play).
+Local builds without the secrets fall back to the standard Android debug key.
