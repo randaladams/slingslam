@@ -28,7 +28,7 @@ An Android game: lob boulders at the hazards rolling toward you before they smas
 - **Controls:** pause and sound are in the bottom-right corner, next to your thumb.
 - **Menus:** the pause menu has Resume and End game, game over has Watch ad to continue (once per run, and not when you end the game yourself), Play again, Scoreboard and Menu, and the title screen has How to play, Scores and Exit.
 - **Testing:** the − / + buttons at the right end of the score row: + jumps to the current level's boss (or the next level if the boss is out), − goes back a level. Remove them before release.
-- **Ads (placeholders for now):** a banner strip is reserved at the very top, away from the controls. An interstitial plays before every 3rd run, and after the shield goes down you can watch a rewarded ad to continue with half shield (once per run). All ad calls go through `showAd()` in `GameView.kt`, ready for AdMob.
+- **Ads (Google AdMob):** a banner at the very top, away from the controls; an interstitial before every 3rd run; and after the shield goes down, a rewarded ad to continue with half shield (once per run). Google's consent form appears where the law requires it, and **Privacy settings** on the Scoreboard screen lets players change their choice. The Play Store bundle (`SlingSlam.aab`) uses the real ad units; the side-loaded APK always shows Google's test ads.
 
 ## Install on your phone
 
@@ -54,6 +54,7 @@ The APK lands in `app/build/outputs/apk/release/`.
 - `GameView.kt` — layout, touch input, screens, HUD
 - `Sprites.kt` — shaded drawings of boulders, hazards, sandbags, sling
 - `Backdrop.kt` — painted battlefield and sky (generated at startup)
+- `Ads.kt` — AdMob banner/interstitial/rewarded ads and the consent form
 - `SoundFx.kt` — sound effects (`res/raw/*.wav`), master volume
 - `MainActivity.kt` — full-screen host activity
 

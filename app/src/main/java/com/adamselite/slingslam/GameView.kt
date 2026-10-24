@@ -38,7 +38,25 @@ import kotlin.math.sin
  *   Ad strip       kept clear for a banner ad
  */
 @SuppressLint("ViewConstructor")
-class GameView(context: Context, private val onExit: () -> Unit = {}) : View(context), WorldListener {
+/** What the game needs from the ad system (implemented by Ads; null means placeholder ads). */
+interface AdGate {
+    fun rewardedReady(): Boolean
+    fun interstitialReady(): Boolean
+    fun showRewarded(done: (Boolean) -> Unit)
+    fun showInterstitial(done: () -> Unit)
+    fun privacyOptionsRequired(): Boolean
+    fun showPrivacyOptions()
+}
+
+class GameView(
+    context: Context,
+    private val onExit: () -> Unit = {},
+    private val ads: AdGate? = null,
+    private val bannerPx: Float = 0f,
+) : View(context), WorldListener {
+
+    /** Tells the activity where the banner strip is (top and height in pixels). */
+    var onAdStrip: ((Int, Int) -> Unit)? = null
 
     private enum class Mode { TITLE, PLAYING, PAUSED, OVER, SCORES, AD }
 
@@ -85,6 +103,10 @@ class GameView(context: Context, private val onExit: () -> Unit = {}) : View(con
     private var adT = 0f
     private var adRewarded = false
     private var adThen: (() -> Unit)? = null
+    private var realAd = false            // a real AdMob ad is on screen (no placeholder countdown)
+    private var notice: String? = null    // short message on the game-over screen
+    private var noticeT = 0f
+    private val privacyBtn = RectF()
     private var unitPx = 1f
     private var slingX = 0f
     private var slingY = 0f
@@ -238,7 +260,7 @@ class GameView(context: Context, private val onExit: () -> Unit = {}) : View(con
     private fun layoutFor(pw: Int, ph: Int) {
         w = pw.toFloat()
         h = ph.toFloat()
-        adH = h * AD_FRACTION
+        adH = max(h * AD_FRACTION, bannerPx)
         hudTop = topInset + adH + h * 0.006f
         hudH = h * 0.065f
         sideTop = hudTop + hudH
@@ -276,6 +298,7 @@ class GameView(context: Context, private val onExit: () -> Unit = {}) : View(con
         levelDown.set(w * 0.80f, lcy - lb / 2f, w * 0.80f + lb, lcy + lb / 2f)
         levelUp.set(w * 0.96f - lb, lcy - lb / 2f, w * 0.96f, lcy + lb / 2f)
 
+        onAdStrip?.invoke(topInset.toInt(), adH.toInt())
         val d = w * 0.012f
         dash = DashPathEffect(floatArrayOf(d * 1.6f, d), 0f)
 
@@ -337,7 +360,7 @@ class GameView(context: Context, private val onExit: () -> Unit = {}) : View(con
                 val x = e.getX(i)
                 val y = e.getY(i)
                 if (mode == Mode.AD) {
-                    if (e.actionMasked == MotionEvent.ACTION_DOWN && adT >= AD_SECONDS) finishAd()
+                    if (!realAd && e.actionMasked == MotionEvent.ACTION_DOWN && adT >= AD_SECONDS) finishAd()
                     return true
                 }
                 if ((mode == Mode.PLAYING || mode == Mode.TITLE || mode == Mode.PAUSED) && inflate(soundBtn).contains(x, y)) {
@@ -363,7 +386,10 @@ class GameView(context: Context, private val onExit: () -> Unit = {}) : View(con
                         else if (btnC.contains(x, y)) { scoresFrom = Mode.OVER; mode = Mode.SCORES }
                         else if (btnB.contains(x, y)) mode = Mode.TITLE
                     }
-                    Mode.SCORES -> if (e.actionMasked == MotionEvent.ACTION_DOWN) mode = scoresFrom
+                    Mode.SCORES -> if (e.actionMasked == MotionEvent.ACTION_DOWN) {
+                        if (ads?.privacyOptionsRequired() == true && inflate(privacyBtn).contains(x, y)) ads.showPrivacyOptions()
+                        else mode = scoresFrom
+                    }
                     Mode.AD -> {}
                     Mode.PAUSED -> if (e.actionMasked == MotionEvent.ACTION_DOWN) {
                         layoutMenu(Mode.PAUSED)
@@ -511,10 +537,12 @@ class GameView(context: Context, private val onExit: () -> Unit = {}) : View(con
         stroke.strokeWidth = 2f
         rect.set(w * 0.02f, topInset + adH * 0.08f, w * 0.98f, topInset + adH * 0.92f)
         c.drawRoundRect(rect, adH * 0.1f, adH * 0.1f, stroke)
-        text.textAlign = Paint.Align.CENTER
-        text.textSize = adH * 0.28f
-        text.color = 0x44E6DCC2
-        c.drawText("BANNER AD SPACE", w / 2f, topInset + adH * 0.6f, text)
+        if (ads == null) {
+            text.textAlign = Paint.Align.CENTER
+            text.textSize = adH * 0.28f
+            text.color = 0x44E6DCC2
+            c.drawText("BANNER AD SPACE", w / 2f, topInset + adH * 0.6f, text)
+        }
     }
 
     // ---------------------------------------------------------------- ads (placeholders)
@@ -533,11 +561,49 @@ class GameView(context: Context, private val onExit: () -> Unit = {}) : View(con
      * call [then] from its dismiss / reward callback.
      */
     private fun showAd(rewarded: Boolean, then: () -> Unit) {
-        adRewarded = rewarded
-        adThen = then
-        adT = 0f
+        val a = ads
         aiming = false
-        mode = Mode.AD
+        if (a == null) {
+            // no ad system (local testing): placeholder screen with a countdown
+            realAd = false
+            adRewarded = rewarded
+            adThen = then
+            adT = 0f
+            mode = Mode.AD
+            return
+        }
+        if (rewarded) {
+            if (!a.rewardedReady()) {
+                notice = "No ad available right now. Try again in a moment."
+                noticeT = 3f
+                return
+            }
+            realAd = true
+            adRewarded = true
+            mode = Mode.AD
+            a.showRewarded { earned ->
+                realAd = false
+                lastNs = 0L
+                if (earned) then() else {
+                    mode = Mode.OVER
+                    notice = "Watch the whole ad to continue."
+                    noticeT = 3f
+                }
+            }
+        } else {
+            if (!a.interstitialReady()) {
+                then()
+                return
+            }
+            realAd = true
+            adRewarded = false
+            mode = Mode.AD
+            a.showInterstitial {
+                realAd = false
+                lastNs = 0L
+                then()
+            }
+        }
     }
 
     private fun finishAd() {
@@ -563,6 +629,7 @@ class GameView(context: Context, private val onExit: () -> Unit = {}) : View(con
         paint.shader = null
         paint.color = 0xF00A0B0C.toInt()
         c.drawRect(0f, 0f, w, h, paint)
+        if (realAd) return     // the real ad covers the screen
         rect.set(w * 0.08f, h * 0.3f, w * 0.92f, h * 0.62f)
         paint.color = 0xFF1E2124.toInt()
         c.drawRoundRect(rect, w * 0.03f, w * 0.03f, paint)
@@ -1449,6 +1516,11 @@ class GameView(context: Context, private val onExit: () -> Unit = {}) : View(con
         text.textSize = w * 0.045f
         text.color = Color.argb((170 + 85 * sin(clock * 4f)).toInt(), 242, 180, 81)
         c.drawText("TAP TO GO BACK", w / 2f, h * 0.9f, text)
+        // consent choices (shown where the law requires a way to change them)
+        if (ads?.privacyOptionsRequired() == true) {
+            privacyBtn.set(w * 0.3f, h * 0.925f, w * 0.7f, h * 0.965f)
+            drawButton(c, privacyBtn, "PRIVACY SETTINGS", false)
+        } else privacyBtn.set(0f, 0f, 0f, 0f)
     }
 
     // ---------------------------------------------------------------- split button
@@ -1752,6 +1824,14 @@ class GameView(context: Context, private val onExit: () -> Unit = {}) : View(con
             drawButton(c, btnA, "PLAY AGAIN", !canContinue())
             drawButton(c, btnC, "SCOREBOARD", false)
             drawButton(c, btnB, "MENU", false)
+        }
+        val n = notice
+        if (n != null && noticeT > 0f) {
+            noticeT -= 1f / 60f
+            text.textAlign = Paint.Align.CENTER
+            text.textSize = w * 0.038f
+            text.color = Color.argb((255 * min(1f, noticeT)).toInt(), 242, 180, 81)
+            outlinedText(c, n, w / 2f, btnB.bottom + h * 0.035f)
         }
     }
 

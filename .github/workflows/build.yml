@@ -40,7 +40,9 @@ jobs:
           SIGNING_KEY_PASSWORD: ${{ secrets.SIGNING_KEY_PASSWORD }}
         run: |
           chmod +x gradlew
-          ./gradlew assembleRelease bundleRelease --stacktrace
+          # side-loaded APK: Google test ads; Play Store bundle: real ads
+          ./gradlew assembleRelease --stacktrace
+          ./gradlew bundleRelease -PplayStore --stacktrace
           cp app/build/outputs/apk/release/app-release.apk SlingSlam.apk
           cp app/build/outputs/bundle/release/app-release.aab SlingSlam.aab
           rm -f app/release.jks

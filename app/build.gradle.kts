@@ -16,6 +16,22 @@ android {
         targetSdk = 35
         versionCode = buildNumber
         versionName = "1.0.$buildNumber"
+
+        // AdMob: the Play Store bundle (built with -PplayStore) uses the real ids; the side-loaded
+        // APK always uses Google's public test ids, so a developer phone never loads a real ad.
+        val realAds = project.hasProperty("playStore")
+        manifestPlaceholders["admobAppId"] =
+            if (realAds) "ca-app-pub-7909301840077799~8581089712" else "ca-app-pub-3940256099942544~3347511713"
+        buildConfigField("String", "ADMOB_BANNER",
+            if (realAds) "\"ca-app-pub-7909301840077799/2215740344\"" else "\"ca-app-pub-3940256099942544/6300978111\"")
+        buildConfigField("String", "ADMOB_INTERSTITIAL",
+            if (realAds) "\"ca-app-pub-7909301840077799/7268008049\"" else "\"ca-app-pub-3940256099942544/1033173712\"")
+        buildConfigField("String", "ADMOB_REWARDED",
+            if (realAds) "\"ca-app-pub-7909301840077799/2335867685\"" else "\"ca-app-pub-3940256099942544/5224354917\"")
+    }
+
+    buildFeatures {
+        buildConfig = true
     }
 
     // Release signing uses the private upload key. CI writes it from the repository secrets
@@ -51,4 +67,9 @@ android {
     lint {
         abortOnError = false
     }
+}
+
+dependencies {
+    implementation("com.google.android.gms:play-services-ads:23.6.0")
+    implementation("com.google.android.ump:user-messaging-platform:3.1.0")
 }
