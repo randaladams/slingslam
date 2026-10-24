@@ -31,8 +31,7 @@ object K {
     const val MAX_RANGE = 104f
     const val MAX_AIM_DEG = 25f       // how far left/right you can aim
     const val SHIELD_MAX = 100f
-    const val SHIELD_REGEN = 0.8f     // per second
-    const val SHIELD_PER_KILL = 6f
+    const val BOSS_SHIELD_BONUS = 25f // shield restored for beating a boss (the only refill besides power cells)
     const val MAX_SLING = 5
     const val HAZARDS_PER_LEVEL = 6
     const val MISS_LIFE = 1.5f         // seconds a missed boulder stays once it has stopped rolling
@@ -211,6 +210,17 @@ class World(private val listener: WorldListener, seed: Long = System.nanoTime())
     val hazardSpeed get() = min(5.5f * (1f + 0.18f * (level - 1) + 0.025f * wave), 30f)
     val spawnDelay get() = max(0.4f, 1.8f - 0.1f * (level - 1))
     val multiplier get() = 1 + streak / 5
+    // ---- boss scaling: each power grows gently and stops at a cap ----
+    /** Hits to destroy: 5 at level 1, about +1 every 2 levels, at most 12 (stones it absorbs add more). */
+    val bossHp get() = min(12, 5 + kotlin.math.round(0.55f * (level - 1)).toInt())
+    /** Walking speed: 2.8 at level 1, rising slowly to 4.2. */
+    val bossSpeed get() = min(4.2f, 2.8f + 0.15f * (level - 1))
+    /** Side-to-side sway from level 2: width up to 6, peak sideways speed up to 4.5. */
+    val bossSwayWidth get() = min(6f, 3f + 0.6f * (level - 2))
+    val bossSwaySpeed get() = min(4.5f, 1.2f + 0.4f * (level - 2))
+    /** Seconds between throws: 6 at level 2, never quicker than 3. */
+    val bossThrowGap get() = max(3f, 6f - 0.3f * (level - 2))
+
     /** Level 1 has 5 waves, each level adds one, up to 8; then the boss. */
     val wavesInLevel get() = min(4 + level, 8)
     val waveLabel get() = if (bossSpawned) "BOSS" else "WAVE ${max(1, wave)}/$wavesInLevel"
@@ -303,7 +313,6 @@ class World(private val listener: WorldListener, seed: Long = System.nanoTime())
         updateEffects(dt)
         if (gameOver) return
 
-        shield = min(K.SHIELD_MAX, shield + K.SHIELD_REGEN * dt)
 
         if (!loaded) {
             reloadT += dt / reloadDuration
@@ -332,9 +341,9 @@ class World(private val listener: WorldListener, seed: Long = System.nanoTime())
             bossSpawned = true
             val shape = FloatArray(9) { 0.82f + rnd.nextFloat() * 0.22f }
             val x = (rnd.nextFloat() * 2f - 1f) * 3f
-            val boss = Hazard(Kind.BOSS, x, K.Z_FAR + 6f, hazardSpeed * 0.45f, shape)
+            val boss = Hazard(Kind.BOSS, x, K.Z_FAR + 6f, bossSpeed, shape)
             // each boss is a little tougher than the last
-            boss.hp = kotlin.math.ceil((Kind.BOSS.hp + (level - 1)) * 1.25f * 1.25f).toInt()
+            boss.hp = bossHp
             boss.maxHp = boss.hp
             hazards.add(boss)
             // every stone left on the field gets sucked into it, one after another
@@ -364,7 +373,7 @@ class World(private val listener: WorldListener, seed: Long = System.nanoTime())
         if (rnd.nextFloat() < 0.15f) {
             val g = rnd.nextFloat()
             kind = when {
-                g < 0.4f && shield < 90f -> Kind.ENERGY
+                g < (if (shield < 50f) 0.6f else 0.4f) && shield < 90f -> Kind.ENERGY
                 g < 0.7f && slingLevel < K.MAX_SLING -> Kind.UPGRADE
                 else -> Kind.GOLD
             }
@@ -440,12 +449,12 @@ class World(private val listener: WorldListener, seed: Long = System.nanoTime())
                         if (h.throwCd <= 0f) {
                             bossThrow(h)
                             if (h.ammo > 0) h.ammo--
-                            h.throwCd = max(1.8f, 5.5f - 0.4f * (level - 2))
+                            h.throwCd = bossThrowGap
                         }
                     }
                     // and it sways side to side, faster and wider each level
-                    val amp = min(K.LANE_HALF - h.radius - 1f, 4f + 0.8f * (level - 2))
-                    val lateral = min(9f, 1.5f + 1.1f * (level - 2))   // peak sideways speed
+                    val amp = min(K.LANE_HALF - h.radius - 1f, bossSwayWidth)
+                    val lateral = bossSwaySpeed
                     h.phase += dt * lateral / max(1f, amp)
                     h.x = (h.baseX + amp * sin(h.phase)).coerceIn(-K.LANE_HALF + h.radius, K.LANE_HALF - h.radius)
                 }
@@ -664,6 +673,21 @@ class World(private val listener: WorldListener, seed: Long = System.nanoTime())
 
     /** Hit areas a little larger than the drawings so edge hits count. */
     private fun hitR(h: Hazard) = h.radius * 1.2f
+
+    /**
+     * Does a boulder at (x, z) touch this hazard on the ground plane? The boss is wide (arms and
+     * fists out to the sides) but shallow, so it uses an ellipse that matches its drawing.
+     */
+    private fun touches(b: Boulder, h: Hazard, extra: Float): Boolean {
+        val dx = b.x - h.x
+        val dz = b.z - h.z
+        if (h.kind == Kind.BOSS) {
+            val ax = h.radius * 2.0f + b.r + extra
+            val az = h.radius * 1.3f + b.r + extra
+            return (dx * dx) / (ax * ax) + (dz * dz) / (az * az) < 1f
+        }
+        return hypot(dx, dz) < hitR(h) + b.r + extra
+    }
     private fun hitH(h: Hazard) = h.height * 1.5f
 
     /** A split shot bursts into three smaller rocks that fan out and can hit other hazards. */
@@ -805,7 +829,7 @@ class World(private val listener: WorldListener, seed: Long = System.nanoTime())
                         if (i >= hazards.size) continue
                         val h = hazards[i]
                         if (b.struck.contains(h)) continue
-                        if (hypot(b.x - h.x, b.z - h.z) < hitR(h) + b.r) {
+                        if (touches(b, h, 0f)) {
                             b.struck.add(h)
                             b.hit = true
                             b.vx *= 0.6f; b.vz *= 0.6f
@@ -822,7 +846,7 @@ class World(private val listener: WorldListener, seed: Long = System.nanoTime())
                         if (i >= hazards.size) continue
                         val h = hazards[i]
                         if (h.kind == Kind.BOSS || b.struck.contains(h)) continue
-                        if (hypot(b.x - h.x, b.z - h.z) < hitR(h) + b.r) {
+                        if (touches(b, h, 0f)) {
                             b.gone = true
                             b.struck.add(h)
                             fire(b.x, 1f, b.z, 16)
@@ -859,8 +883,7 @@ class World(private val listener: WorldListener, seed: Long = System.nanoTime())
             var direct: Hazard? = null
             for (h in hazards) {
                 if (b.struck.contains(h)) continue
-                val d = hypot(b.x - h.x, b.z - h.z)
-                if (d < hitR(h) + b.r && b.y < h.y + hitH(h) + b.r * 0.5f) {
+                if (touches(b, h, 0f) && b.y < h.y + hitH(h) + b.r * 0.5f) {
                     direct = h
                     break
                 }
@@ -915,7 +938,7 @@ class World(private val listener: WorldListener, seed: Long = System.nanoTime())
                     if (i >= hazards.size) continue
                     val h = hazards[i]
                     if (b.struck.contains(h)) continue
-                    if (hypot(b.x - h.x, b.z - h.z) < hitR(h) + b.r * 0.7f + splash) {
+                    if (touches(b, h, splash - b.r * 0.3f)) {
                         struckAny = true
                         b.hit = true
                         b.struck.add(h)
@@ -963,7 +986,11 @@ class World(private val listener: WorldListener, seed: Long = System.nanoTime())
             bestStreak = max(bestStreak, streak)
             val pts = h.kind.points * multiplier
             score += pts
-            shield = min(K.SHIELD_MAX, shield + if (h.kind == Kind.BOSS) 25f else K.SHIELD_PER_KILL)
+            if (h.kind == Kind.BOSS) {
+                val gain = min(K.BOSS_SHIELD_BONUS, K.SHIELD_MAX - shield)
+                if (gain >= 1f) popups.add(Popup("+${gain.toInt()} SHIELD", h.x, h.z - 8f, 0xFF4DD0E1.toInt(), big = true))
+                shield += gain
+            }
             shake = max(shake, if (h.kind == Kind.BOSS) 1f else 0.45f)
             if (h.kind == Kind.BOSS) levelComplete(true)
             listener.onSound(Sfx.BREAK)
@@ -977,7 +1004,7 @@ class World(private val listener: WorldListener, seed: Long = System.nanoTime())
             burst(h.x, h.height * 0.5f, h.z, color, 26 * big, 22f * (1f + (big - 1) * 0.3f))
             smoke(h.x, 1.5f, h.z, 9 * big, 0xFF8D7B68.toInt(), 2.2f * big)
             popups.add(Popup("+$pts", h.x, h.z, 0xFFFFFFFF.toInt(), big = true, value = pts))
-            if (streak % 5 == 0) showBanner("STREAK! x$multiplier POINTS")
+            if (streak % 5 == 0 && h.kind != Kind.BOSS) showBanner("STREAK! x$multiplier POINTS")
             return
         }
 
