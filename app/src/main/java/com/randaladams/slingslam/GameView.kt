@@ -549,11 +549,7 @@ class GameView(context: Context, private val onExit: () -> Unit = {}) : View(con
 
     /** Rewarded continue after the shield goes down: half shield, field cleared, once per run. */
     private fun continueRun() {
-        world.continued = true
-        world.gameOver = false
-        world.shield = K.SHIELD_MAX * 0.5f
-        world.hazards.clear()
-        world.spawnTimer = 1.5f
+        world.resumeAfterContinue(K.SHIELD_MAX * 0.5f)
         world.banner = "SHIELD RESTORED — KEEP GOING!"
         world.bannerT = 1.8f
         // the run isn't over after all: take back the score that was just recorded

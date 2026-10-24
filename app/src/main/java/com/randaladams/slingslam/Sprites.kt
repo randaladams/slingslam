@@ -83,8 +83,8 @@ class Sprites {
     fun hazard(c: Canvas, hz: Hazard, cx: Float, bottom: Float, u: Float, side: Boolean, clock: Float) {
         val r = hz.radius * u
         when (hz.kind) {
-            Kind.BARREL -> roller(c, hz, cx, bottom - r, r)
-            Kind.ROCK -> rock(c, hz, cx, bottom - r * 0.9f, r)
+            Kind.BARREL -> roller(c, hz, cx, bottom - r, r, side)
+            Kind.ROCK -> rock(c, hz, cx, bottom - r * 0.9f, r, if (side) -hz.spin else 0f)
             Kind.BOSS -> {
                 golem(c, hz, cx, bottom, r)
                 if (hz.flash > 0f) {
@@ -105,7 +105,7 @@ class Sprites {
     }
 
     /** A round granite boulder rolling straight at you: speckles and cracks turn with it. */
-    private fun roller(c: Canvas, hz: Hazard, cx: Float, cy: Float, r: Float) {
+    private fun roller(c: Canvas, hz: Hazard, cx: Float, cy: Float, r: Float, side: Boolean) {
         path.reset()
         val n = 14
         for (k in 0 until n) {
@@ -124,17 +124,40 @@ class Sprites {
         )
         c.drawPath(path, paint)
         paint.shader = null
-        // granite speckle, rotating as it rolls
-        for (k in 0 until 9) {
-            val a = hz.spin + k * 0.7f
-            val d = r * (0.2f + 0.6f * ((k * 37) % 10) / 10f)
-            fill(if (k % 3 == 0) 0x55D8D0C4 else 0x55201C18)
-            c.drawCircle(cx + cos(a) * d, cy + sin(a) * d * 0.95f, r * 0.05f, paint)
+        if (side) {
+            // side view: it rolls toward you (to the left), so it turns counter-clockwise
+            for (k in 0 until 9) {
+                val a = -hz.spin + k * 0.7f
+                val d = r * (0.2f + 0.6f * ((k * 37) % 10) / 10f)
+                fill(if (k % 3 == 0) 0x55D8D0C4 else 0x55201C18)
+                c.drawCircle(cx + cos(a) * d, cy + sin(a) * d, r * 0.05f, paint)
+            }
+        } else {
+            // head-on: the surface turns over toward you, so speckles come over the top and
+            // slide down the face of the boulder, shrinking as they wrap round the edges
+            for (k in 0 until 12) {
+                val u = ((k * 0.383f) % 1f) * 1.6f - 0.8f          // across the face
+                val phi = (hz.spin + k * 1.7f) % tau             // around the rolling axis
+                val ph = if (phi < 0f) phi + tau else phi
+                if (ph > PI.toFloat()) continue                   // on the far side
+                val ring = kotlin.math.sqrt(1f - u * u)
+                val depth = sin(ph)                               // 1 when facing you
+                val x = cx + u * r
+                val y = cy - cos(ph) * ring * r
+                fill(if (k % 3 == 0) Color.argb((110 * depth).toInt(), 216, 208, 196) else Color.argb((110 * depth).toInt(), 32, 28, 24))
+                c.drawCircle(x, y, r * 0.06f * (0.4f + 0.6f * depth), paint)
+            }
+            // a crack band wrapping round the boulder, rolling down its face
+            val ph = ((hz.spin * 1f) % tau + tau) % tau
+            if (ph < PI.toFloat()) {
+                val y = cy - cos(ph) * r * 0.95f
+                val half = sin(ph) * r * 0.75f
+                stroke.color = Color.argb((170 * sin(ph)).toInt(), 27, 24, 20)
+                stroke.strokeWidth = max(1f, r * 0.05f)
+                c.drawLine(cx - half, y, cx - half * 0.2f, y + r * 0.06f, stroke)
+                c.drawLine(cx - half * 0.2f, y + r * 0.06f, cx + half, y - r * 0.03f, stroke)
+            }
         }
-        stroke.color = 0xAA1B1814.toInt()
-        stroke.strokeWidth = max(1f, r * 0.05f)
-        val ca = hz.spin
-        c.drawLine(cx + cos(ca) * r * 0.1f, cy + sin(ca) * r * 0.1f, cx + cos(ca + 0.3f) * r * 0.8f, cy + sin(ca + 0.3f) * r * 0.8f, stroke)
         stroke.color = 0xFF1A1714.toInt()
         stroke.strokeWidth = max(1f, r * 0.05f)
         c.drawPath(path, stroke)
@@ -293,11 +316,11 @@ class Sprites {
         }
     }
 
-    private fun rock(c: Canvas, hz: Hazard, cx: Float, cy: Float, r: Float) {
+    private fun rock(c: Canvas, hz: Hazard, cx: Float, cy: Float, r: Float, rot: Float = 0f) {
         path.reset()
         val n = hz.shape.size
         for (i in 0 until n) {
-            val a = hz.spin + i * tau / n
+            val a = rot + i * tau / n
             val rr = r * hz.shape[i]
             val x = cx + cos(a) * rr
             val y = cy + sin(a) * rr * 0.85f
@@ -314,7 +337,7 @@ class Sprites {
         paint.shader = null
         // lichen and speckles
         for (k in 0 until 5) {
-            val a = hz.spin + k * 1.3f
+            val a = rot + k * 1.3f
             fill(if (k % 2 == 0) Color.argb(90, 40, 36, 30) else Color.argb(70, 120, 125, 90))
             c.drawCircle(cx + cos(a) * r * 0.5f * hz.shape[k], cy + sin(a) * r * 0.4f, r * 0.09f * (1 + k % 3), paint)
         }

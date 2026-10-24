@@ -514,6 +514,20 @@ class World(private val listener: WorldListener, seed: Long = System.nanoTime())
         listener.onVibrate(40, 120)
     }
 
+    /**
+     * Back into the run after a rewarded continue: field cleared, and the next wave sent shortly.
+     * If the shield went down during a boss fight, that boss comes back fresh.
+     */
+    fun resumeAfterContinue(newShield: Float) {
+        continued = true
+        gameOver = false
+        shield = newShield
+        hazards.clear()
+        for (b in boulders) b.pulled = false
+        if (bossSpawned) bossSpawned = false      // wave count is already complete, so the boss returns
+        spawnTimer = 1.5f
+    }
+
     /** Testing aid: jump straight to a level. */
     fun debugSetLevel(n: Int) {
         level = n.coerceIn(1, 99)
